@@ -1,0 +1,14 @@
+# Build outputs
+/build/
+/target/
+**/target/
+
+# Rust
+Cargo.lock.bak
+*.rs.bk
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

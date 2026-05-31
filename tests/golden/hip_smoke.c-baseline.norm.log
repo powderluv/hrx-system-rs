@@ -1,0 +1,6 @@
+[TS] HIP Logging initialized (level=2)
+[TS] hipInit(flags=0xPTR) -> 100
+[TS] hipDriverGetVersion() -> version=VER, ret=0
+[TS] hipRuntimeGetVersion() -> version=VER, ret=0
+[TS] hipGetDeviceCount() -> count=0, ret=100
+[TS] HIP Logging shutting down
