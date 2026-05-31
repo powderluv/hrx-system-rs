@@ -1,0 +1,13 @@
+[package]
+name = "hip-logging"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hip-function-table = { path = "../hip-function-table" }
+libc = "0.2"
+
+[lib]
+name = "hip_logging"
+crate-type = ["cdylib"]

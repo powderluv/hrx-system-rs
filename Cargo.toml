@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hip-function-table",
+    "crates/hip-logging",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 WITH LLVM-exception"
+repository = "local"
+
+[profile.release]
+opt-level = 2

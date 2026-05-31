@@ -1,0 +1,11 @@
+[package]
+name = "hip-function-table"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+libc = "0.2"
+
+[lib]
+crate-type = ["rlib"]
