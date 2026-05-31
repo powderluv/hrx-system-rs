@@ -12,6 +12,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# A global HSA_OVERRIDE_GFX_VERSION (e.g. 11.0.0) forces the gfx1201 GPU to
+# masquerade as another arch, which makes HIP enumerate 0 devices. The native
+# gfx120X nightly needs no override.
+unset HSA_OVERRIDE_GFX_VERSION
 INTERCEPT="${1:?usage: run_preload_test.sh <intercept.so> [interceptor.so]}"
 INTERCEPTOR="${2:-$ROOT/build/c-baseline/libhip_logging.so}"
 OUT="${OUT:-$ROOT/build/test-out}"
@@ -31,9 +36,12 @@ echo "backend     : $HIP_PASSTHROUGH_BACKEND_LIB"
 echo "passthrough : $INTERCEPT"
 echo "interceptor : $INTERCEPTOR"
 
-# The backend's own deps (libamd_comgr, hsa, etc.) live alongside it.
+# The backend's own deps live alongside it (libamd_comgr, libhsa-runtime64) and
+# in the wheel's rocm_sysdeps/lib (libdrm_amdgpu, libnuma, libelf). Without
+# rocm_sysdeps on the path, HSA cannot talk to the GPU and hipGetDeviceCount=0.
 BACKEND_DIR="$(dirname "$HIP_PASSTHROUGH_BACKEND_LIB")"
-export LD_LIBRARY_PATH="$BACKEND_DIR:${LD_LIBRARY_PATH:-}"
+SYSDEPS_DIR="$(find "$VENV" -type d -name lib -path '*rocm_sysdeps*' 2>/dev/null | head -1)"
+export LD_LIBRARY_PATH="$BACKEND_DIR${SYSDEPS_DIR:+:$SYSDEPS_DIR}:${LD_LIBRARY_PATH:-}"
 
 # Build the smoke app, linking against the real backend by full path (as a real
 # HIP app would link -lamdhip64). At runtime LD_PRELOAD interposes the

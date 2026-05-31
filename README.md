@@ -15,6 +15,21 @@ the analysis of upstream.
   conformance oracle the Rust port is diffed against.
 - **Phase 1 (Rust passthrough) — in progress.**
 
+### GPU status (2026-05-31)
+
+The differential test is verified **GPU-free** (host shows 0 devices): both the C
+and Rust interceptors produce the identical 6-line `count=0` trace, which proves
+the ABI/format port. It has **not** yet been validated against a live GPU.
+
+Attempting to bring up the gfx1201 GPU live (it is held by vfio-pci at boot via
+`vfio-pci-temp.conf` + amdgpu blacklist) wedged the card: live `modprobe -r
+amdgpu` fails ("Module is in use") and sysfs PCI reset is unsupported on this
+device ("Inappropriate ioctl"), so it needs a **reboot** to recover. Two earlier
+commits (8d950eb, 91e99c4) overstated "GPU active" — that was a misread of
+unreliable tool output; the committed golden trace is the `count=0` trace.
+
+GPU tests must run with the Bash sandbox disabled (it masks `/dev/kfd`).
+
 ## Layout
 
 ```
