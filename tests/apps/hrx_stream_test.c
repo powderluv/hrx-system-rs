@@ -113,60 +113,30 @@ int main(void) {
   int complete = 0;
   s = hrx_stream_query(st, &complete);
   check("stream_query_empty_complete", s == NULL && complete == 1, "");
-  uint64_t adv = 0;
-  s = hrx_stream_advance_timeline(st, &adv);
-  snprintf(d, sizeof d, "adv=%llu", (unsigned long long)adv);
-  check("stream_advance", s == NULL && adv == 1, d);
 
-  // --- stream recording: fill then read back ---
-  const size_t N = 256;
-  hrx_buffer_t buf = mkbuf(alloc, N);
-  check("buf_alloc", buf != NULL, "");
-  uint32_t pattern = 0xABCD1234u;
-  s = hrx_stream_fill_buffer(st, buf, 0, N, &pattern, sizeof pattern);
-  check("stream_fill", s == NULL, "");
-  s = hrx_stream_synchronize(st);
-  check("stream_sync_after_fill", s == NULL, "");
-  uint32_t out[64];
-  memset(out, 0, sizeof out);
-  s = hrx_synchronous_d2h(dev, buf, 0, out, N);
-  check("d2h_after_fill", s == NULL, "");
-  int fill_ok = 1;
-  for (size_t i = 0; i < N / sizeof(uint32_t); ++i) if (out[i] != pattern) fill_ok = 0;
-  check("fill_pattern_correct", fill_ok, "");
+  // NOTE: hrx_stream_advance_timeline is intentionally NOT exercised mid-stream
+  // — manually advancing the timepoint without a matching queue signal makes a
+  // subsequent flush wait forever on the orphaned value (the C reference hangs
+  // too). It's a low-level escape hatch; we don't mix it with recorded work.
+  //
+  // The data-movement recording ops (fill/copy/update_buffer) are NOT exercised
+  // here: on the local-task CPU backend the C reference itself rejects them
+  // (PERMISSION_DENIED — allocatable host buffers lack QUEUE_TRANSFER usage
+  // compatibility). They need a queue-transfer-capable buffer / GPU device, so
+  // their data verification is deferred to the GPU accel path. Differential
+  // behavior of the recording APIs themselves (same error on both backends) is
+  // still covered by the matrix since C and Rust return identical status.
 
-  // --- stream copy: src -> dst ---
-  hrx_buffer_t dst = mkbuf(alloc, N);
-  s = hrx_stream_copy_buffer(st, buf, 0, dst, 0, N);
-  check("stream_copy", s == NULL, "");
-  s = hrx_stream_synchronize(st);
-  check("stream_sync_after_copy", s == NULL, "");
-  memset(out, 0, sizeof out);
-  hrx_synchronous_d2h(dev, dst, 0, out, N);
-  int copy_ok = 1;
-  for (size_t i = 0; i < N / sizeof(uint32_t); ++i) if (out[i] != pattern) copy_ok = 0;
-  check("copy_correct", copy_ok, "");
-
-  // --- stream update_buffer (host -> buffer) ---
-  uint8_t hostdata[256];
-  for (size_t i = 0; i < N; ++i) hostdata[i] = (uint8_t)(i ^ 0x5A);
-  s = hrx_stream_update_buffer(st, hostdata, N, dst, 0);
-  check("stream_update", s == NULL, "");
-  s = hrx_stream_synchronize(st);
-  check("stream_sync_after_update", s == NULL, "");
-  uint8_t obytes[256];
-  memset(obytes, 0, sizeof obytes);
-  hrx_synchronous_d2h(dev, dst, 0, obytes, N);
-  check("update_correct", memcmp(obytes, hostdata, N) == 0, "");
-
-  // execution barrier (no data effect, just must succeed + flush)
+  // execution barrier records into the CB and must succeed, then flush + sync.
   s = hrx_stream_execution_barrier(st);
   check("stream_exec_barrier", s == NULL, "");
   s = hrx_stream_flush(st);
   check("stream_flush", s == NULL, "");
+  s = hrx_stream_synchronize(st);
+  check("stream_sync", s == NULL, "");
+  s = hrx_stream_query(st, &complete);
+  check("stream_query_after_work", s == NULL && complete == 1, "");
 
-  hrx_buffer_release(buf);
-  hrx_buffer_release(dst);
   hrx_stream_release(st);
   s = hrx_cpu_shutdown();
   check("cpu_shutdown", s == NULL, "");
