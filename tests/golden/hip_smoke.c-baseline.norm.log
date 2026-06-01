@@ -1,6 +1,14 @@
 [TS] HIP Logging initialized (level=2)
-[TS] hipInit(flags=0xPTR) -> 100
+[TS] hipInit(flags=0xPTR) -> 0
 [TS] hipDriverGetVersion() -> version=VER, ret=0
 [TS] hipRuntimeGetVersion() -> version=VER, ret=0
-[TS] hipGetDeviceCount() -> count=0, ret=100
+[TS] hipGetDeviceCount() -> count=1, ret=0
+[TS] hipSetDevice(0) -> 0
+[TS] hipDeviceGetName(device=0) -> name=AMD Radeon AI PRO R9700, ret=0
+[TS] hipMalloc(size=1024) -> ptr=0xPTR, ret=0
+[TS] hipMemcpy(dst=0xPTR, src=0xPTR, size=1024, kind=H2D) -> 0
+[TS] hipMemset(dst=0xPTR, value=0xPTR, size=1024) -> 0
+[TS] hipMemcpy(dst=0xPTR, src=0xPTR, size=1024, kind=D2H) -> 0
+[TS] hipFree(0xPTR) -> 0
+[TS] hipDeviceSynchronize() -> 0
 [TS] HIP Logging shutting down
