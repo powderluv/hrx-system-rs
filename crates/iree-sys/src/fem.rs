@@ -251,4 +251,92 @@ extern "C" {
     pub fn iree_hal_buffer_retain_ref(buffer: *mut super::init::iree_hal_buffer_t) -> iree_vm_ref_t;
     pub fn iree_hal_buffer_view_retain_ref(buffer_view: *mut iree_hal_buffer_view_t) -> iree_vm_ref_t;
     pub fn iree_hal_fence_retain_ref(fence: *mut iree_hal_fence_t) -> iree_vm_ref_t;
+
+    // --- allocator: import + virtual/physical memory ---
+    pub fn iree_hal_allocator_import_buffer(
+        allocator: *mut iree_hal_allocator_t,
+        params: super::init::iree_hal_buffer_params_t, // BY VALUE (32B)
+        external_buffer: *mut iree_hal_external_buffer_t,
+        release_callback: iree_hal_buffer_release_callback_t, // BY VALUE (16B)
+        out_buffer: *mut *mut super::init::iree_hal_buffer_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_allocator_supports_virtual_memory(allocator: *mut iree_hal_allocator_t) -> bool;
+    pub fn iree_hal_allocator_virtual_memory_query_granularity(
+        allocator: *mut iree_hal_allocator_t,
+        params: super::init::iree_hal_buffer_params_t,
+        out_minimum_page_size: *mut u64,
+        out_recommended_page_size: *mut u64,
+    ) -> iree_status_t;
+    pub fn iree_hal_allocator_virtual_memory_reserve(
+        allocator: *mut iree_hal_allocator_t,
+        queue_affinity: u64,
+        size: u64,
+        out_virtual_buffer: *mut *mut super::init::iree_hal_buffer_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_allocator_virtual_memory_release(
+        allocator: *mut iree_hal_allocator_t,
+        virtual_buffer: *mut super::init::iree_hal_buffer_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_allocator_physical_memory_allocate(
+        allocator: *mut iree_hal_allocator_t,
+        params: super::init::iree_hal_buffer_params_t,
+        size: u64,
+        host_allocator: iree_allocator_t,
+        out_physical_memory: *mut *mut super::init::iree_hal_physical_memory_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_allocator_physical_memory_free(
+        allocator: *mut iree_hal_allocator_t,
+        physical_memory: *mut super::init::iree_hal_physical_memory_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_allocator_virtual_memory_map(
+        allocator: *mut iree_hal_allocator_t,
+        virtual_buffer: *mut super::init::iree_hal_buffer_t,
+        virtual_offset: u64,
+        physical_memory: *mut super::init::iree_hal_physical_memory_t,
+        physical_offset: u64,
+        size: u64,
+    ) -> iree_status_t;
+    pub fn iree_hal_allocator_virtual_memory_unmap(
+        allocator: *mut iree_hal_allocator_t,
+        virtual_buffer: *mut super::init::iree_hal_buffer_t,
+        virtual_offset: u64,
+        size: u64,
+    ) -> iree_status_t;
+    pub fn iree_hal_allocator_virtual_memory_protect(
+        allocator: *mut iree_hal_allocator_t,
+        virtual_buffer: *mut super::init::iree_hal_buffer_t,
+        virtual_offset: u64,
+        size: u64,
+        queue_affinity: u64,
+        protection: u32,
+    ) -> iree_status_t;
+}
+
+pub const IREE_HAL_EXTERNAL_BUFFER_TYPE_HOST_ALLOCATION: u32 = 1;
+
+/// `iree_hal_external_buffer_t` (24B): type u32@0, flags u32@4, size u64@8,
+/// handle union (ptr) @16.
+#[repr(C, align(8))]
+pub struct iree_hal_external_buffer_t {
+    pub type_: u32,
+    pub flags: u32,
+    pub size: u64,
+    pub handle_ptr: *mut c_void, // host_allocation.ptr (union, first member)
+}
+
+/// `iree_hal_buffer_release_callback_t` (16B): { fn, user_data }. Null = all-zero.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct iree_hal_buffer_release_callback_t {
+    pub fn_: *mut c_void,
+    pub user_data: *mut c_void,
+}
+impl iree_hal_buffer_release_callback_t {
+    /// `iree_hal_buffer_release_callback_null()` (inline) — zeroed.
+    pub fn null() -> Self {
+        iree_hal_buffer_release_callback_t {
+            fn_: core::ptr::null_mut(),
+            user_data: core::ptr::null_mut(),
+        }
+    }
 }

@@ -60,6 +60,12 @@ extern void hrx_value_list_release(hrx_value_list_t);
 extern hrx_status_t hrx_value_list_size(hrx_value_list_t, size_t *);
 extern hrx_status_t hrx_value_list_push_buffer(hrx_value_list_t, hrx_buffer_t);
 
+extern hrx_status_t hrx_allocator_query_virtual_memory(hrx_allocator_t, uint32_t mem_type,
+                                                       unsigned char *supported, size_t *min_page,
+                                                       size_t *rec_page);
+extern hrx_status_t hrx_allocator_import_buffer(hrx_allocator_t, hrx_buffer_params_t,
+                                                void *host_ptr, size_t, hrx_buffer_t *);
+
 static int g_fail = 0;
 static void check(const char *name, int pass, const char *detail) {
   printf("CHECK %s %s %s\n", name, pass ? "PASS" : "FAIL", detail ? detail : "");
@@ -175,6 +181,49 @@ int main(void) {
       check("vlist_create_for_push", 0, "");
       if (s) hrx_status_ignore(s);
     }
+  }
+
+  // --- allocator query_virtual_memory: deterministic; on local-task CPU the
+  // allocator reports no virtual-memory support (supported=0, page sizes 0).
+  {
+    unsigned char supported = 0xAA;
+    size_t minp = 12345, recp = 67890;
+    hrx_status_t qs = hrx_allocator_query_virtual_memory(
+        alloc, HRX_MEMORY_TYPE_HOST_LOCAL | HRX_MEMORY_TYPE_HOST_VISIBLE,
+        &supported, &minp, &recp);
+    snprintf(d, sizeof d, "code=%d supported=%d minp=%zu recp=%zu",
+             hrx_status_code(qs), (int)supported, minp, recp);
+    check("query_virtual_memory", qs == NULL, d);
+    if (qs) hrx_status_ignore(qs);
+  }
+
+  // --- allocator import_buffer: import a host allocation. The underlying IREE
+  // call is identical for C and Rust, so the status code matches regardless of
+  // whether this allocator supports host import.
+  {
+    static unsigned char host_region[256];
+    for (size_t i = 0; i < sizeof host_region; ++i) host_region[i] = (unsigned char)i;
+    hrx_buffer_params_t ip = {
+        .type = HRX_MEMORY_TYPE_HOST_LOCAL | HRX_MEMORY_TYPE_HOST_VISIBLE,
+        .access = HRX_MEMORY_ACCESS_ALL,
+        .usage = HRX_BUFFER_USAGE_DEFAULT | HRX_BUFFER_USAGE_MAPPING_SCOPED,
+        .queue_affinity = 0,
+    };
+    hrx_buffer_t imported = NULL;
+    hrx_status_t is = hrx_allocator_import_buffer(alloc, ip, host_region,
+                                                  sizeof host_region, &imported);
+    snprintf(d, sizeof d, "code=%d imported_nonnull=%d", hrx_status_code(is),
+             imported != NULL);
+    check("import_buffer", 1, d);
+    if (is == NULL && imported) {
+      hrx_buffer_release(imported);
+    } else if (is) {
+      hrx_status_ignore(is);
+    }
+    // null args -> INVALID_ARGUMENT (3)
+    hrx_status_t ie = hrx_allocator_import_buffer(alloc, ip, NULL, 16, &imported);
+    check("import_buffer_null_errors", hrx_status_code(ie) == 3, "");
+    hrx_status_ignore(ie);
   }
 
   hrx_buffer_retain(buf);

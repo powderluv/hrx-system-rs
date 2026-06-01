@@ -36,6 +36,7 @@ extern hrx_status_t hrx_fence_wait(hrx_fence_t, uint64_t);
 extern hrx_status_t hrx_module_load_vmfb(hrx_device_t, const void *, size_t, hrx_module_t *);
 extern hrx_status_t hrx_module_lookup_function(hrx_module_t, const char *, hrx_function_t *);
 extern hrx_status_t hrx_executable_load_data(hrx_device_t, const void *, size_t, const char *, hrx_executable_t *);
+extern hrx_status_t hrx_executable_load_file(hrx_device_t, const char *path, const char *fmt, hrx_executable_t *);
 
 static int g_fail = 0;
 static void check(const char *n, int pass, const char *d) {
@@ -110,6 +111,15 @@ int main(void) {
   hrx_status_t xn = hrx_executable_load_data(dev, NULL, 0, "x", &exe);
   check("executable_load_null_errors", hrx_status_code(xn) == 3, "");
   hrx_status_ignore(xn);
+
+  // --- executable_load_file: error ladder (NULL args=3, missing file=NOT_FOUND=5)
+  hrx_status_t fn = hrx_executable_load_file(dev, NULL, "x", &exe);
+  check("executable_load_file_null_errors", hrx_status_code(fn) == 3, "");
+  hrx_status_ignore(fn);
+  hrx_status_t fnf = hrx_executable_load_file(dev, "/nonexistent/hrx/path.bin", "x", &exe);
+  snprintf(d, sizeof d, "code=%d", hrx_status_code(fnf));
+  check("executable_load_file_missing", hrx_status_code(fnf) == 5, d);
+  hrx_status_ignore(fnf);
 
   s = hrx_cpu_shutdown();
   check("cpu_shutdown", s == NULL, "");

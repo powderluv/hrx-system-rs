@@ -18,6 +18,11 @@ typedef struct hrx_buffer_params_t {
   uint32_t type; uint16_t access; uint32_t usage; uint64_t queue_affinity;
 } hrx_buffer_params_t;
 typedef hrx_status_t (*hrx_host_call_fn_t)(void *user_data);
+typedef struct hrx_executable_s *hrx_executable_t;
+typedef struct hrx_buffer_ref_t { hrx_buffer_t buffer; size_t offset; size_t length; } hrx_buffer_ref_t;
+typedef struct hrx_dispatch_config_t {
+  uint32_t workgroup_count[3]; uint32_t workgroup_size[3]; uint32_t subgroup_size;
+} hrx_dispatch_config_t;
 
 #define HRX_MEMORY_TYPE_HOST_VISIBLE 0x00000002u
 #define HRX_MEMORY_TYPE_HOST_LOCAL 0x00000046u
@@ -47,6 +52,12 @@ extern hrx_status_t hrx_queue_copy(hrx_device_t, uint64_t, const hrx_semaphore_l
                                    hrx_buffer_t, size_t, size_t);
 extern hrx_status_t hrx_queue_host_call(hrx_device_t, uint64_t, const hrx_semaphore_list_t *,
                                         const hrx_semaphore_list_t *, hrx_host_call_fn_t, void *);
+extern hrx_status_t hrx_queue_dispatch(hrx_device_t, uint64_t, const hrx_semaphore_list_t *,
+                                       const hrx_semaphore_list_t *, hrx_executable_t,
+                                       uint32_t export_ordinal, const hrx_dispatch_config_t *,
+                                       const void *constants, size_t constants_size,
+                                       const hrx_buffer_ref_t *bindings, size_t binding_count,
+                                       uint32_t flags);
 
 static int g_fail = 0;
 static void check(const char *n, int pass, const char *d) {
@@ -126,6 +137,19 @@ int main(void) {
   snprintf(d, sizeof d, "code=%d", hrx_status_code(cs));
   check("queue_copy_status", 1, d);
   if (cs) hrx_status_ignore(cs);
+
+  // --- queue_dispatch: argument validation (no executable artifact here, so we
+  // only exercise the deterministic error ladder; both backends must agree).
+  hrx_dispatch_config_t cfg = { .workgroup_count = {1,1,1}, .workgroup_size = {0,0,0}, .subgroup_size = 0 };
+  hrx_status_t de = hrx_queue_dispatch(NULL, 0, NULL, NULL, NULL, 0, &cfg, NULL, 0, NULL, 0, 0);
+  check("queue_dispatch_null_device_errors", hrx_status_code(de) == 3, "");
+  hrx_status_ignore(de);
+  hrx_status_t de2 = hrx_queue_dispatch(dev, 0, NULL, NULL, NULL, 0, &cfg, NULL, 0, NULL, 0, 0);
+  check("queue_dispatch_null_exe_errors", hrx_status_code(de2) == 3, "");
+  hrx_status_ignore(de2);
+  hrx_status_t de3 = hrx_queue_dispatch(dev, 0, NULL, NULL, (hrx_executable_t)dev, 0, NULL, NULL, 0, NULL, 0, 0);
+  check("queue_dispatch_null_config_errors", hrx_status_code(de3) == 3, "");
+  hrx_status_ignore(de3);
 
   hrx_buffer_release(b); hrx_buffer_release(b2);
   hrx_semaphore_release(sem); hrx_semaphore_release(hsem);

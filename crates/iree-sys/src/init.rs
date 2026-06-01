@@ -164,6 +164,44 @@ impl iree_hal_buffer_ref_t {
     }
 }
 
+/// `iree_hal_dispatch_config_t` (64B, align 8): workgroup_size[3]@0,
+/// workgroup_count[3]@12, workgroup_count_ref (buffer_ref 32B)@24,
+/// dynamic_workgroup_local_memory u32@56, tail pad to 64.
+#[repr(C, align(8))]
+#[derive(Clone, Copy)]
+pub struct iree_hal_dispatch_config_t {
+    pub workgroup_size: [u32; 3],
+    pub workgroup_count: [u32; 3],
+    pub workgroup_count_ref: iree_hal_buffer_ref_t,
+    pub dynamic_workgroup_local_memory: u32,
+    pub _pad: u32,
+}
+impl iree_hal_dispatch_config_t {
+    /// Static dispatch: only workgroup_size/count populated, the rest zeroed
+    /// (matches the libhrx designated-initializer, which leaves the indirect
+    /// fields zero).
+    pub fn new_static(size: [u32; 3], count: [u32; 3]) -> Self {
+        iree_hal_dispatch_config_t {
+            workgroup_size: size,
+            workgroup_count: count,
+            workgroup_count_ref: iree_hal_buffer_ref_t::make(core::ptr::null_mut(), 0, 0),
+            dynamic_workgroup_local_memory: 0,
+            _pad: 0,
+        }
+    }
+}
+
+/// `iree_hal_buffer_ref_list_t` (16B): { count: iree_host_size_t, values: *const ref }.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct iree_hal_buffer_ref_list_t {
+    pub count: iree_host_size_t,
+    pub values: *const iree_hal_buffer_ref_t,
+}
+
+/// `iree_hal_dispatch_flags_t` = uint64_t.
+pub type iree_hal_dispatch_flags_t = u64;
+
 /// `iree_hal_memory_barrier_t` (8B): { source_scope u32 @0, target_scope u32 @4 }.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -518,6 +556,29 @@ extern "C" {
         call: iree_hal_host_call_t,
         args: *const u64, // const uint64_t args[4]
         flags: u64,
+    ) -> iree_status_t;
+
+    // --- dispatch (command buffer + device queue) ---
+    pub fn iree_hal_command_buffer_dispatch(
+        cb: *mut iree_hal_command_buffer_t,
+        executable: *mut super::fem::iree_hal_executable_t,
+        function: super::fem::iree_hal_executable_function_t, // BY VALUE (8B)
+        config: iree_hal_dispatch_config_t,                   // BY VALUE (64B)
+        constants: super::iree_const_byte_span_t,             // BY VALUE (16B)
+        bindings: iree_hal_buffer_ref_list_t,                 // BY VALUE (16B)
+        flags: iree_hal_dispatch_flags_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_device_queue_dispatch(
+        device: *mut iree_hal_device_t,
+        queue_affinity: u64,
+        wait_semaphore_list: iree_hal_semaphore_list_t,
+        signal_semaphore_list: iree_hal_semaphore_list_t,
+        executable: *mut super::fem::iree_hal_executable_t,
+        function: super::fem::iree_hal_executable_function_t,
+        config: iree_hal_dispatch_config_t,
+        constants: super::iree_const_byte_span_t,
+        bindings: iree_hal_buffer_ref_list_t,
+        flags: iree_hal_dispatch_flags_t,
     ) -> iree_status_t;
 }
 

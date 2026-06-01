@@ -51,6 +51,14 @@ extern hrx_status_t hrx_stream_fill_buffer(hrx_stream_t, hrx_buffer_t, size_t, s
 extern hrx_status_t hrx_stream_copy_buffer(hrx_stream_t, hrx_buffer_t, size_t, hrx_buffer_t, size_t, size_t);
 extern hrx_status_t hrx_stream_update_buffer(hrx_stream_t, const void *, size_t, hrx_buffer_t, size_t);
 extern hrx_status_t hrx_stream_execution_barrier(hrx_stream_t);
+typedef struct hrx_executable_s *hrx_executable_t;
+typedef struct hrx_buffer_ref_t { hrx_buffer_t buffer; size_t offset; size_t length; } hrx_buffer_ref_t;
+typedef struct hrx_dispatch_config_t {
+  uint32_t workgroup_count[3]; uint32_t workgroup_size[3]; uint32_t subgroup_size;
+} hrx_dispatch_config_t;
+extern hrx_status_t hrx_stream_dispatch(hrx_stream_t, hrx_executable_t, uint32_t,
+                                        const hrx_dispatch_config_t *, const void *, size_t,
+                                        const hrx_buffer_ref_t *, size_t, uint32_t);
 
 static int g_fail = 0;
 static void check(const char *n, int pass, const char *d) {
@@ -136,6 +144,15 @@ int main(void) {
   check("stream_sync", s == NULL, "");
   s = hrx_stream_query(st, &complete);
   check("stream_query_after_work", s == NULL && complete == 1, "");
+
+  // --- stream_dispatch: argument validation (deterministic error ladder).
+  hrx_dispatch_config_t cfg = { .workgroup_count = {1,1,1}, .workgroup_size = {0,0,0}, .subgroup_size = 0 };
+  hrx_status_t de = hrx_stream_dispatch(NULL, NULL, 0, &cfg, NULL, 0, NULL, 0, 0);
+  check("stream_dispatch_null_stream_errors", hrx_status_code(de) == 3, "");
+  hrx_status_ignore(de);
+  hrx_status_t de2 = hrx_stream_dispatch(st, NULL, 0, &cfg, NULL, 0, NULL, 0, 0);
+  check("stream_dispatch_null_exe_errors", hrx_status_code(de2) == 3, "");
+  hrx_status_ignore(de2);
 
   hrx_stream_release(st);
   s = hrx_cpu_shutdown();

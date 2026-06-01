@@ -211,3 +211,57 @@ pub unsafe extern "C" fn hrx_executable_lookup_export_by_name(
     *export_ordinal = func.value as u32;
     hrx_ok_status()
 }
+
+/// `hrx_executable_load_file` (executable.c) — read the whole file with the
+/// system host allocator, then delegate to hrx_executable_load_data. Mirrors the
+/// C fopen/fseek/ftell/fread error ladder exactly so status codes match.
+#[no_mangle]
+pub unsafe extern "C" fn hrx_executable_load_file(
+    device: HrxDevice,
+    path: *const c_char,
+    executable_format: *const c_char,
+    executable: *mut HrxExecutable,
+) -> HrxStatus {
+    if device.is_null() || path.is_null() || executable.is_null() {
+        return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"device, path, or executable is NULL".as_ptr());
+    }
+    *executable = core::ptr::null_mut();
+
+    let file = libc::fopen(path, c"rb".as_ptr());
+    if file.is_null() {
+        return hrx_make_status(HrxStatusCode::NotFound as i32, c"failed to open executable file".as_ptr());
+    }
+    if libc::fseek(file, 0, libc::SEEK_END) != 0 {
+        libc::fclose(file);
+        return hrx_make_status(HrxStatusCode::Internal as i32, c"failed to seek executable file".as_ptr());
+    }
+    let file_size = libc::ftell(file);
+    if file_size <= 0 {
+        libc::fclose(file);
+        return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"empty executable file".as_ptr());
+    }
+    if libc::fseek(file, 0, libc::SEEK_SET) != 0 {
+        libc::fclose(file);
+        return hrx_make_status(HrxStatusCode::Internal as i32, c"failed to rewind executable file".as_ptr());
+    }
+
+    let sys = iree::allocator_system();
+    let ha = HrxHostAllocator { self_: sys.self_, ctl: sys.ctl };
+    let mut file_data: *mut c_void = core::ptr::null_mut();
+    let status = crate::host_allocator::hrx_host_allocator_malloc_uninitialized(ha, file_size as usize, &mut file_data);
+    if !hrx_status_is_ok(status) {
+        libc::fclose(file);
+        return status;
+    }
+
+    let read_size = libc::fread(file_data, 1, file_size as usize, file);
+    libc::fclose(file);
+    if read_size != file_size as usize {
+        crate::host_allocator::hrx_host_allocator_free(ha, file_data);
+        return hrx_make_status(HrxStatusCode::DataLoss as i32, c"short read while loading executable file".as_ptr());
+    }
+
+    let status = hrx_executable_load_data(device, file_data, file_size as usize, executable_format, executable);
+    crate::host_allocator::hrx_host_allocator_free(ha, file_data);
+    status
+}

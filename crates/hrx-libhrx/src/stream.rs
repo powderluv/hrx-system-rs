@@ -1,8 +1,5 @@
 //! Rust port of libhrx/src/libhrx/stream.c — streams own a timeline semaphore +
 //! a pending one-shot command buffer; ops accumulate and flush on demand.
-//!
-//! hrx_stream_dispatch is DEFERRED (needs hrx_executable_t + the dispatch
-//! command-buffer surface). Everything else is ported.
 #![allow(non_snake_case)]
 
 use core::ffi::c_void;
@@ -11,11 +8,14 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use crate::buffer::HrxBuffer;
 use crate::common::*;
 use crate::device::{hrx_device_release, hrx_device_retain, HrxDevice};
+use crate::executable::HrxExecutable;
+use crate::queue_ops::{build_hal_bindings, HrxBufferRef, HrxDispatchConfig};
 use crate::semaphore::{
     hrx_semaphore_create, hrx_semaphore_query, hrx_semaphore_release, hrx_semaphore_retain,
     hrx_semaphore_wait, HrxSemaphore,
 };
 use iree_sys as iree;
+use iree_sys::fem;
 use iree_sys::init as ireei;
 
 /// `hrx_stream_s` = { ref_count, device, semaphore, timepoint, pending_cb,
@@ -466,6 +466,63 @@ pub unsafe extern "C" fn hrx_stream_execution_barrier(stream: HrxStream) -> HrxS
     if !iree::status_is_ok(s) {
         return hrx_status_from_iree(s);
     }
+    (*stream).has_pending_work = true;
+    hrx_ok_status()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_stream_dispatch(
+    stream: HrxStream,
+    executable: HrxExecutable,
+    export_ordinal: u32,
+    config: *const HrxDispatchConfig,
+    constants: *const c_void,
+    constants_size: usize,
+    bindings: *const HrxBufferRef,
+    binding_count: usize,
+    flags: u32,
+) -> HrxStatus {
+    if stream.is_null()
+        || executable.is_null()
+        || config.is_null()
+        || (binding_count > 0 && bindings.is_null())
+        || (constants_size > 0 && constants.is_null())
+    {
+        return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"stream, executable, config, constants, or bindings are invalid".as_ptr());
+    }
+
+    let s = stream_begin_cb(stream);
+    if !hrx_status_is_ok(s) {
+        return s;
+    }
+
+    let (_hold, hal_binding_list) = match build_hal_bindings(bindings, binding_count) {
+        Ok(x) => x,
+        Err(()) => return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"binding buffer is NULL".as_ptr()),
+    };
+
+    let hal_config = ireei::iree_hal_dispatch_config_t::new_static((*config).workgroup_size, (*config).workgroup_count);
+    let hal_constants = iree::iree_const_byte_span_t { data: constants as *const u8, data_length: constants_size };
+    let func = fem::iree_hal_executable_function_t { value: export_ordinal as u64 };
+
+    let s = ireei::iree_hal_command_buffer_dispatch(
+        (*stream).pending_cb,
+        (*executable).hal_executable,
+        func,
+        hal_config,
+        hal_constants,
+        hal_binding_list,
+        flags as u64,
+    );
+    if !iree::status_is_ok(s) {
+        return hrx_status_from_iree(s);
+    }
+
+    let s = record_ordering_barrier(stream);
+    if !iree::status_is_ok(s) {
+        return hrx_status_from_iree(s);
+    }
+
     (*stream).has_pending_work = true;
     hrx_ok_status()
 }
