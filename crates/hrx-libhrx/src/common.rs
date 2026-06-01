@@ -66,6 +66,19 @@ pub fn hrx_status_is_ok(s: HrxStatus) -> bool {
     s.is_null()
 }
 
+/// Internal equivalent of `hrx_status_ignore`: free an error status's payload
+/// (used where the C code calls hrx_status_ignore on a discarded status).
+#[inline]
+pub fn hrx_status_drop(s: HrxStatus) {
+    if s.is_null() {
+        return;
+    }
+    unsafe {
+        libc::free((*s).message as *mut core::ffi::c_void);
+        libc::free(s as *mut core::ffi::c_void);
+    }
+}
+
 /// Mirror of `hrx_make_status`: OK code returns NULL; otherwise malloc a payload
 /// and strdup the message. Uses libc malloc/strdup so `hrx_status_ignore`
 /// (libc free) and the C reference free the same way.

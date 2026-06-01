@@ -40,7 +40,8 @@ run_diff() { # $1=test-name $2=source.c
 
 run_diff abi  hrx_abi_test.c    # status + host_allocator (init-free)
 run_diff init hrx_init_test.c   # cpu init + device + value_list
-run_diff mem  hrx_mem_test.c    # allocator + buffer + transfer
+run_diff mem    hrx_mem_test.c    # allocator + buffer + transfer
+run_diff stream hrx_stream_test.c # semaphore + stream
 
 if [ "$fail" = 0 ]; then
   echo "PASS: Rust libhrx output identical to C libhrx (all suites)"

@@ -10,10 +10,14 @@ mod common;
 mod device;
 mod host_allocator;
 mod runtime;
+mod semaphore;
 mod status;
+mod stream;
 mod value_list;
 
 pub use buffer::{HrxBuffer, HrxBufferParams, HrxBufferS};
 pub use common::{HrxHostAllocator, HrxStatus, HrxStatusCode, HrxStatusS};
 pub use device::{HrxDevice, HrxDeviceS};
+pub use semaphore::{HrxSemaphore, HrxSemaphoreS};
+pub use stream::{HrxStream, HrxStreamS, HrxTimelinePoint};
 pub use value_list::HrxValueListS;

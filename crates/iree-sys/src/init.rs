@@ -95,24 +95,101 @@ pub struct iree_timeout_t {
     pub type_: i32,
     pub nanos: i64,
 }
+pub const IREE_TIME_INFINITE_PAST: i64 = i64::MIN;
+pub const IREE_TIMEOUT_RELATIVE: i32 = 1;
+
 impl iree_timeout_t {
     /// `iree_infinite_timeout` (inline).
     pub fn infinite() -> Self {
         iree_timeout_t { type_: IREE_TIMEOUT_ABSOLUTE, nanos: IREE_TIME_INFINITE_FUTURE }
     }
+    /// `iree_immediate_timeout` (inline) = {ABSOLUTE, INFINITE_PAST}.
+    pub fn immediate() -> Self {
+        iree_timeout_t { type_: IREE_TIMEOUT_ABSOLUTE, nanos: IREE_TIME_INFINITE_PAST }
+    }
+    /// `iree_make_timeout_ns` (inline) = {RELATIVE, ns}.
+    pub fn relative_ns(ns: i64) -> Self {
+        iree_timeout_t { type_: IREE_TIMEOUT_RELATIVE, nanos: ns }
+    }
 }
 
-/// `iree_hal_semaphore_list_t` (24 B). All-zero = empty list.
-#[repr(C, align(8))]
+/// `iree_hal_semaphore_list_t` (24 B): { count usize @0, semaphores ptr @8,
+/// payload_values ptr @16 }. All-zero = empty list.
+#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct iree_hal_semaphore_list_t {
-    pub _bytes: [u8; 24],
+    pub count: iree_host_size_t,
+    pub semaphores: *mut *mut iree_hal_semaphore_t,
+    pub payload_values: *mut u64,
 }
 impl Default for iree_hal_semaphore_list_t {
     fn default() -> Self {
-        iree_hal_semaphore_list_t { _bytes: [0; 24] }
+        iree_hal_semaphore_list_t {
+            count: 0,
+            semaphores: core::ptr::null_mut(),
+            payload_values: core::ptr::null_mut(),
+        }
     }
 }
+
+/// `iree_hal_buffer_ref_t` (32B): first word is a u32 bitfield (reserved:8 +
+/// buffer_slot:24, both 0 here), then buffer ptr @8, offset @16, length @24.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct iree_hal_buffer_ref_t {
+    pub reserved_and_slot: u32,
+    pub _pad: u32,
+    pub buffer: *mut iree_hal_buffer_t,
+    pub offset: iree_device_size_t,
+    pub length: iree_device_size_t,
+}
+impl iree_hal_buffer_ref_t {
+    /// `iree_hal_make_buffer_ref` (inline).
+    pub fn make(buffer: *mut iree_hal_buffer_t, offset: u64, length: u64) -> Self {
+        iree_hal_buffer_ref_t {
+            reserved_and_slot: 0,
+            _pad: 0,
+            buffer,
+            offset,
+            length,
+        }
+    }
+}
+
+/// `iree_hal_memory_barrier_t` (8B): { source_scope u32 @0, target_scope u32 @4 }.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct iree_hal_memory_barrier_t {
+    pub source_scope: u32,
+    pub target_scope: u32,
+}
+
+/// `iree_hal_buffer_binding_table_t` (16B). All-zero = empty.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct iree_hal_buffer_binding_table_t {
+    pub count: iree_host_size_t,
+    pub bindings: *const iree_hal_buffer_ref_t,
+}
+impl Default for iree_hal_buffer_binding_table_t {
+    fn default() -> Self {
+        iree_hal_buffer_binding_table_t { count: 0, bindings: core::ptr::null() }
+    }
+}
+
+// Opaque handles for the stream/semaphore path.
+pub type iree_hal_semaphore_t = c_void;
+pub type iree_hal_command_buffer_t = c_void;
+
+// Command-buffer / queue enum values (probed).
+pub const IREE_HAL_SEMAPHORE_FLAG_NONE: u32 = 0;
+pub const IREE_HAL_COMMAND_BUFFER_MODE_ONE_SHOT: u32 = 1;
+pub const IREE_HAL_COMMAND_CATEGORY_TRANSFER: u32 = 1;
+pub const IREE_HAL_COMMAND_CATEGORY_DISPATCH: u32 = 2;
+pub const IREE_HAL_EXECUTION_STAGE_COMMAND_RETIRE: u32 = 16;
+pub const IREE_HAL_EXECUTION_STAGE_COMMAND_ISSUE: u32 = 1;
+pub const IREE_HAL_EXECUTION_BARRIER_FLAG_NONE: u32 = 0;
+pub const IREE_HAL_QUEUE_AFFINITY_ANY: u64 = u64::MAX;
 
 // --- correctly-sized opaque option/param blobs (filled by C initializers) ---
 macro_rules! blob {
@@ -337,5 +414,92 @@ extern "C" {
         data_length: iree_device_size_t,
         flags: u32,
         timeout: iree_timeout_t,
+    ) -> iree_status_t;
+
+    // --- timeline semaphore ---
+    pub fn iree_hal_semaphore_create(
+        device: *mut iree_hal_device_t,
+        queue_affinity: u64,
+        initial_value: u64,
+        flags: u32,
+        out_semaphore: *mut *mut iree_hal_semaphore_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_semaphore_retain(semaphore: *mut iree_hal_semaphore_t);
+    pub fn iree_hal_semaphore_release(semaphore: *mut iree_hal_semaphore_t);
+    pub fn iree_hal_semaphore_query(
+        semaphore: *mut iree_hal_semaphore_t,
+        out_value: *mut u64,
+    ) -> iree_status_t;
+    pub fn iree_hal_semaphore_wait(
+        semaphore: *mut iree_hal_semaphore_t,
+        value: u64,
+        timeout: iree_timeout_t,
+        flags: u32,
+    ) -> iree_status_t;
+    pub fn iree_hal_semaphore_signal(
+        semaphore: *mut iree_hal_semaphore_t,
+        new_value: u64,
+        frontier: *mut c_void,
+    ) -> iree_status_t;
+
+    // --- command buffer ---
+    pub fn iree_hal_command_buffer_create(
+        device: *mut iree_hal_device_t,
+        mode: u32,
+        command_categories: u32,
+        queue_affinity: u64,
+        binding_capacity: iree_host_size_t,
+        out_command_buffer: *mut *mut iree_hal_command_buffer_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_command_buffer_begin(cb: *mut iree_hal_command_buffer_t) -> iree_status_t;
+    pub fn iree_hal_command_buffer_end(cb: *mut iree_hal_command_buffer_t) -> iree_status_t;
+    pub fn iree_hal_command_buffer_release(cb: *mut iree_hal_command_buffer_t);
+    pub fn iree_hal_command_buffer_execution_barrier(
+        cb: *mut iree_hal_command_buffer_t,
+        source_stage_mask: u32,
+        target_stage_mask: u32,
+        flags: u32,
+        memory_barrier_count: iree_host_size_t,
+        memory_barriers: *const iree_hal_memory_barrier_t,
+        buffer_barrier_count: iree_host_size_t,
+        buffer_barriers: *const c_void,
+    ) -> iree_status_t;
+    pub fn iree_hal_command_buffer_fill_buffer(
+        cb: *mut iree_hal_command_buffer_t,
+        target_ref: iree_hal_buffer_ref_t,
+        pattern: *const c_void,
+        pattern_length: iree_host_size_t,
+        flags: u32,
+    ) -> iree_status_t;
+    pub fn iree_hal_command_buffer_copy_buffer(
+        cb: *mut iree_hal_command_buffer_t,
+        source_ref: iree_hal_buffer_ref_t,
+        target_ref: iree_hal_buffer_ref_t,
+        flags: u32,
+    ) -> iree_status_t;
+    pub fn iree_hal_command_buffer_update_buffer(
+        cb: *mut iree_hal_command_buffer_t,
+        source_buffer: *const c_void,
+        source_offset: iree_host_size_t,
+        target_ref: iree_hal_buffer_ref_t,
+        flags: u32,
+    ) -> iree_status_t;
+
+    // --- device queue ---
+    pub fn iree_hal_device_queue_execute(
+        device: *mut iree_hal_device_t,
+        queue_affinity: u64,
+        wait_semaphore_list: iree_hal_semaphore_list_t,
+        signal_semaphore_list: iree_hal_semaphore_list_t,
+        command_buffer: *mut iree_hal_command_buffer_t,
+        binding_table: iree_hal_buffer_binding_table_t,
+        flags: u32,
+    ) -> iree_status_t;
+    pub fn iree_hal_device_queue_barrier(
+        device: *mut iree_hal_device_t,
+        queue_affinity: u64,
+        wait_semaphore_list: iree_hal_semaphore_list_t,
+        signal_semaphore_list: iree_hal_semaphore_list_t,
+        flags: u32,
     ) -> iree_status_t;
 }
