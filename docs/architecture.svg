@@ -1,0 +1,151 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 632" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#555"/></marker>
+    <marker id="arrL" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#8a7bbf"/></marker>
+  </defs>
+
+  <rect x="0" y="0" width="1180" height="632" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="590" y="26" text-anchor="middle" font-size="19" font-weight="700" fill="#1f2328">hrx-system-rs — Rust port architecture vs ROCm/hrx-system (C)</text>
+  <text x="590" y="46" text-anchor="middle" font-size="11" fill="#57606a">Same core IREE HAL substrate. The Rust port reimplements the libhrx public ABI and the HIP passthrough tools, reuses IREE as prebuilt static archives, and leaves the HIP binding + streaming layer to the C original.</text>
+
+  <!-- Column headers -->
+  <rect x="40" y="60" width="540" height="26" rx="4" fill="#34404a"/>
+  <text x="310" y="78" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">ROCm/hrx-system &#8212; C original</text>
+  <rect x="600" y="60" width="540" height="26" rx="4" fill="#b85c2e"/>
+  <text x="870" y="78" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">hrx-system-rs &#8212; Rust port</text>
+
+  <!-- column divider -->
+  <line x1="590" y1="92" x2="590" y2="456" stroke="#d0d7de" stroke-width="1" stroke-dasharray="3,3"/>
+
+  <!-- ============ CONSUMERS (B0, y 98..130) ============ -->
+  <rect x="52" y="98" width="246" height="32" rx="4" fill="#f6f8fa" stroke="#aab2bd"/>
+  <text x="175" y="118" text-anchor="middle" font-size="11" fill="#24292f">HIP / CUDA app</text>
+  <rect x="322" y="98" width="246" height="32" rx="4" fill="#f6f8fa" stroke="#aab2bd"/>
+  <text x="445" y="118" text-anchor="middle" font-size="11" fill="#24292f">native hrx app &#183; CTS</text>
+
+  <rect x="612" y="98" width="246" height="32" rx="4" fill="#f6f8fa" stroke="#aab2bd"/>
+  <text x="735" y="118" text-anchor="middle" font-size="11" fill="#24292f">HIP app  (LD_PRELOAD)</text>
+  <rect x="882" y="98" width="246" height="32" rx="4" fill="#f6f8fa" stroke="#aab2bd"/>
+  <text x="1005" y="118" text-anchor="middle" font-size="11" fill="#24292f">hrx app &#183; differential tests &#183; hrx_bench</text>
+
+  <!-- B0 -> B1 arrows -->
+  <line x1="175" y1="130" x2="175" y2="141" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="445" y1="130" x2="445" y2="141" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="735" y1="130" x2="735" y2="141" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="1005" y1="130" x2="1005" y2="141" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+
+  <!-- ============ PRODUCTS (B1, y 142..226) ============ -->
+  <!-- C: HIP binding -->
+  <rect x="52" y="142" width="246" height="84" rx="5" fill="#d9c9a8" stroke="#9c8552"/>
+  <text x="175" y="162" text-anchor="middle" font-size="12" font-weight="700" fill="#3d3320">libamdhip64.so</text>
+  <text x="175" y="180" text-anchor="middle" font-size="10.5" fill="#4a3f29">HIP binding &#183; binding/hip/api.c</text>
+  <text x="175" y="196" text-anchor="middle" font-size="10.5" fill="#4a3f29">~219 HIP entrypoints</text>
+  <text x="175" y="215" text-anchor="middle" font-size="10" fill="#7a6a44" font-style="italic">a full HIP runtime over IREE</text>
+  <!-- C: public ABI -->
+  <rect x="322" y="142" width="246" height="84" rx="5" fill="#d9c9a8" stroke="#9c8552"/>
+  <text x="445" y="162" text-anchor="middle" font-size="12" font-weight="700" fill="#3d3320">libhrx.so</text>
+  <text x="445" y="180" text-anchor="middle" font-size="10.5" fill="#4a3f29">public ABI &#183; src/libhrx</text>
+  <text x="445" y="196" text-anchor="middle" font-size="10.5" fill="#4a3f29">114 hrx_* symbols</text>
+  <text x="445" y="215" text-anchor="middle" font-size="10" fill="#7a6a44" font-style="italic">calls core IREE HAL directly</text>
+
+  <!-- Rust: HIP passthrough -->
+  <rect x="612" y="142" width="246" height="84" rx="5" fill="#f3b585" stroke="#c0531f"/>
+  <text x="735" y="161" text-anchor="middle" font-size="12" font-weight="700" fill="#4a2410">libhip_intercept.so  (hip-intercept)</text>
+  <text x="735" y="178" text-anchor="middle" font-size="10.5" fill="#5c3018">355 hip* &#183; LD_PRELOAD shim + hip-function-table</text>
+  <text x="735" y="194" text-anchor="middle" font-size="10.5" fill="#5c3018">interceptors: logging &#183; buffer-tracer &#183; noop</text>
+  <text x="735" y="214" text-anchor="middle" font-size="10" fill="#8a4a23" font-style="italic">forwards to real HIP; not a HIP runtime</text>
+  <!-- Rust: public ABI -->
+  <rect x="882" y="142" width="246" height="84" rx="5" fill="#f3b585" stroke="#c0531f"/>
+  <text x="1005" y="162" text-anchor="middle" font-size="12" font-weight="700" fill="#4a2410">libhrx_rs.so  (crate hrx-libhrx)</text>
+  <text x="1005" y="180" text-anchor="middle" font-size="10.5" fill="#5c3018">114 / 114 hrx_* &#183; 16 modules &#183; cdylib</text>
+  <text x="1005" y="196" text-anchor="middle" font-size="10.5" fill="#5c3018">byte-identical &amp; perf-parity vs C</text>
+  <text x="1005" y="215" text-anchor="middle" font-size="10" fill="#8a4a23" font-style="italic">calls core IREE HAL directly</text>
+
+  <!-- B1 -> B2 arrows -->
+  <line x1="175" y1="226" x2="175" y2="237" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="735" y1="226" x2="735" y2="237" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="1005" y1="226" x2="1005" y2="237" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+  <!-- C public ABI -> core HAL direct (skips B2) -->
+  <line x1="445" y1="226" x2="445" y2="297" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+  <text x="452" y="266" font-size="9.5" fill="#777" font-style="italic">direct</text>
+  <!-- streaming -> libhrx lifecycle (hrx_bridge) -->
+  <line x1="298" y1="250" x2="321" y2="206" stroke="#8a7bbf" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrL)"/>
+  <text x="300" y="240" font-size="9" fill="#8a7bbf" font-style="italic">hrx lifecycle</text>
+
+  <!-- ============ MID LAYER (B2, y 238..286) ============ -->
+  <!-- C: streaming -->
+  <rect x="52" y="238" width="246" height="48" rx="5" fill="#d9c9a8" stroke="#9c8552"/>
+  <text x="175" y="258" text-anchor="middle" font-size="11.5" font-weight="700" fill="#3d3320">streaming layer &#183; src/streaming</text>
+  <text x="175" y="275" text-anchor="middle" font-size="10.5" fill="#4a3f29">iree_hal_streaming_* (~266 syms)</text>
+  <!-- Rust HIP: real ROCm (external, terminal) -->
+  <rect x="612" y="238" width="246" height="48" rx="5" fill="#bce3b5" stroke="#4f9e45"/>
+  <text x="735" y="258" text-anchor="middle" font-size="11.5" font-weight="700" fill="#1f4d18">real ROCm libamdhip64.so</text>
+  <text x="735" y="275" text-anchor="middle" font-size="10.5" fill="#2e5e26">dlopen + dlsym forward (external)</text>
+  <!-- Rust hrx: iree-sys FFI -->
+  <rect x="882" y="238" width="246" height="48" rx="5" fill="#f3b585" stroke="#c0531f"/>
+  <text x="1005" y="258" text-anchor="middle" font-size="11.5" font-weight="700" fill="#4a2410">iree-sys &#8212; Rust FFI shim</text>
+  <text x="1005" y="275" text-anchor="middle" font-size="10.5" fill="#5c3018">~127 iree_* externs &#183; static-links archives</text>
+
+  <!-- B2 -> B3 -->
+  <line x1="175" y1="286" x2="175" y2="297" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="1005" y1="286" x2="1005" y2="297" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+
+  <!-- ============ CORE HAL (B3, y 298..338) ============ -->
+  <!-- C: full column -->
+  <rect x="52" y="298" width="516" height="40" rx="5" fill="#a9c7e8" stroke="#3f6fa0"/>
+  <text x="310" y="318" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16314f">core IREE HAL &#8212; iree_hal_* / iree_vm_*</text>
+  <text x="310" y="333" text-anchor="middle" font-size="10" fill="#234a73">command_buffer &#183; device_queue &#183; allocator &#183; semaphore &#183; executable</text>
+  <!-- Rust: right half (hrx path only) -->
+  <rect x="882" y="298" width="246" height="40" rx="5" fill="#a9c7e8" stroke="#3f6fa0"/>
+  <text x="1005" y="318" text-anchor="middle" font-size="11.5" font-weight="700" fill="#16314f">core IREE HAL</text>
+  <text x="1005" y="333" text-anchor="middle" font-size="10" fill="#234a73">iree_hal_* / iree_vm_*</text>
+  <!-- Rust: NOT-PORTED ghost (left half of right column) -->
+  <rect x="612" y="298" width="246" height="96" rx="5" fill="#efefef" stroke="#b3b3b3" stroke-dasharray="5,4"/>
+  <text x="735" y="333" text-anchor="middle" font-size="11" font-weight="700" fill="#8a8a8a">NOT PORTED</text>
+  <text x="735" y="352" text-anchor="middle" font-size="10" fill="#8a8a8a">streaming layer (iree_hal_streaming_*)</text>
+  <text x="735" y="368" text-anchor="middle" font-size="10" fill="#8a8a8a">HIP binding (libamdhip64 over streaming)</text>
+  <text x="735" y="384" text-anchor="middle" font-size="10" fill="#8a8a8a">CTS &#183; 15 suites</text>
+
+  <!-- B3 -> B4 -->
+  <line x1="310" y1="338" x2="310" y2="349" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="1005" y1="338" x2="1005" y2="349" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+
+  <!-- ============ IREE SUBSTRATE (B4, y 350..396) ============ -->
+  <rect x="52" y="350" width="516" height="46" rx="5" fill="#88b1de" stroke="#3f6fa0"/>
+  <text x="310" y="370" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0f2740">IREE runtime &#8212; runtime/src/iree  (~635K LOC)</text>
+  <text x="310" y="386" text-anchor="middle" font-size="10" fill="#16314f">compiled-in subtree &#183; STATIC &#183; -fvisibility=hidden</text>
+  <rect x="882" y="350" width="246" height="46" rx="5" fill="#88b1de" stroke="#3f6fa0"/>
+  <text x="1005" y="368" text-anchor="middle" font-size="11" font-weight="700" fill="#0f2740">108 prebuilt IREE archives</text>
+  <text x="1005" y="383" text-anchor="middle" font-size="10" fill="#16314f">libiree_*.a &#183; REUSED as-is ($HRX_BUILD_DIR)</text>
+
+  <!-- B4 -> GPU -->
+  <line x1="310" y1="396" x2="310" y2="407" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+  <line x1="1005" y1="396" x2="1005" y2="407" stroke="#555" stroke-width="1.4" marker-end="url(#arr)"/>
+
+  <!-- ============ GPU BAND (full width) ============ -->
+  <rect x="40" y="408" width="1100" height="40" rx="5" fill="#e7e0f2" stroke="#9b8bb4"/>
+  <text x="590" y="428" text-anchor="middle" font-size="11.5" font-weight="700" fill="#3a2e57">HAL driver &#8212; local-task (CPU) &#183; amdgpu -&gt; HSA -&gt; AMD GPU</text>
+  <text x="590" y="443" text-anchor="middle" font-size="10" fill="#4f4072">validated on MI300X (gfx942): 7/7 differential suites byte-identical, public-ABI perf at parity</text>
+
+  <!-- ============ CALLOUTS ============ -->
+  <text x="40" y="476" font-size="11" font-weight="700" fill="#24292f">What the Rust port changes</text>
+  <text x="40" y="494" font-size="10.5" fill="#444d56">&#8226; Reimplements the libhrx public ABI (libhrx_rs.so) and the HIP passthrough/interceptor tools in Rust &#8212; both hit core IREE HAL the same way the C code does (no streaming layer).</text>
+  <text x="40" y="510" font-size="10.5" fill="#444d56">&#8226; Reuses IREE unchanged: a compiled-in static subtree in C becomes 108 prebuilt static archives linked through the iree-sys FFI shim in Rust (symbols are global inside the .a, so they link even though the .so hides them).</text>
+  <text x="40" y="526" font-size="10.5" fill="#444d56">&#8226; Does not port the HIP runtime binding (libamdhip64 over streaming) or the streaming layer; the Rust HIP path is an LD_PRELOAD passthrough that forwards to the real ROCm HIP.</text>
+
+  <!-- ============ LEGEND ============ -->
+  <rect x="40" y="544" width="14" height="14" rx="2" fill="#f3b585" stroke="#c0531f"/>
+  <text x="60" y="555" font-size="10.5" fill="#24292f">reimplemented in Rust</text>
+  <rect x="220" y="544" width="14" height="14" rx="2" fill="#d9c9a8" stroke="#9c8552"/>
+  <text x="240" y="555" font-size="10.5" fill="#24292f">C / HRX-authored</text>
+  <rect x="380" y="544" width="14" height="14" rx="2" fill="#a9c7e8" stroke="#3f6fa0"/>
+  <text x="400" y="555" font-size="10.5" fill="#24292f">IREE (reused unchanged)</text>
+  <rect x="570" y="544" width="14" height="14" rx="2" fill="#bce3b5" stroke="#4f9e45"/>
+  <text x="590" y="555" font-size="10.5" fill="#24292f">real ROCm / external</text>
+  <rect x="740" y="544" width="14" height="14" rx="2" fill="#efefef" stroke="#b3b3b3" stroke-dasharray="3,2"/>
+  <text x="760" y="555" font-size="10.5" fill="#24292f">not ported</text>
+  <line x1="880" y1="551" x2="904" y2="551" stroke="#8a7bbf" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <text x="910" y="555" font-size="10.5" fill="#24292f">lifecycle dependency</text>
+</svg>

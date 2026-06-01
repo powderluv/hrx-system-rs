@@ -6,39 +6,70 @@ with the **LD_PRELOAD HIP passthrough/interception** layer.
 See [`plans/rust-port-plan.md`](plans/rust-port-plan.md) for scope, phasing, and
 the analysis of upstream.
 
+## Architecture
+
+![hrx-system-rs architecture vs ROCm/hrx-system](docs/architecture.svg)
+
+`ROCm/hrx-system` builds three products on a compiled-in, hidden-visibility IREE
+runtime subtree: the **libhrx public ABI** (`libhrx.so`, 114 `hrx_*`, calling
+core IREE HAL directly), the **HIP binding** (`libamdhip64.so`, a full HIP
+runtime layered on a separate `iree_hal_streaming_*` abstraction), and the
+**HIP passthrough/interceptor** diagnostic tools. This port reimplements two of
+those in Rust and reuses the IREE substrate unchanged:
+
+- **libhrx public ABI → `libhrx_rs.so`** (crate `hrx-libhrx`): all **114/114**
+  `hrx_*` symbols, calling core IREE HAL directly through the `iree-sys` FFI
+  shim — exactly the C layering, with no streaming layer. Byte-identical to C on
+  the 7-suite functional differential and at performance parity on MI300X
+  (gfx942); see [`results/BASELINE.md`](results/BASELINE.md).
+- **HIP passthrough tools → Rust** (`hip-intercept` + `hip-function-table` +
+  `hip-logging` / `hip-buffer-tracer` / `hip-noop`): an `LD_PRELOAD` shim
+  exporting 355 HIP symbols that forwards to the real ROCm HIP and chains
+  pluggable interceptors.
+- **IREE is reused unchanged**: the C build compiles it in as a static subtree;
+  the Rust port links the resulting 108 prebuilt `libiree_*.a` archives through
+  `iree-sys` (their symbols are global inside the archives even though the C
+  `.so` hides them).
+
+Not ported: the HIP runtime binding (`libamdhip64` over streaming) and the
+`iree_hal_streaming_*` layer — the Rust HIP path forwards to the real ROCm HIP
+rather than reimplementing a HIP runtime over IREE.
+
 ## Status
 
-- **Phase 0 (baseline) — working.** The upstream C passthrough libraries build
+- **Phase 0 (baseline) — done.** The upstream C passthrough libraries build
   standalone (gcc, no ROCm/IREE), and a HIP app runs through
   `libhip_intercept.so` under `LD_PRELOAD` against a real backend
   `libamdhip64.so`, routed through the logging interceptor. This is the
   conformance oracle the Rust port is diffed against.
-- **Phase 1 (Rust passthrough) — in progress.**
+- **Phase 1 (Rust HIP passthrough) — done.** `hip-intercept` (355 HIP symbols)
+  plus `hip-function-table` and the logging / buffer-tracer / noop interceptors
+  are byte-identical to the C passthrough across the {C,Rust}×{C,Rust}
+  differential matrix, validated on a live MI300X.
+- **Phase 2 (Rust libhrx) — done.** `hrx-libhrx` reimplements all **114/114**
+  exported `hrx_*` symbols over `iree-sys`; the 7-suite functional differential
+  (`scripts/libhrx_diff_test.sh`) is byte-identical to C, and the public-ABI
+  microbench is at performance parity on MI300X.
 
-### GPU status (2026-05-31)
-
-The differential test is verified **GPU-free** (host shows 0 devices): both the C
-and Rust interceptors produce the identical 6-line `count=0` trace, which proves
-the ABI/format port. It has **not** yet been validated against a live GPU.
-
-Attempting to bring up the gfx1201 GPU live (it is held by vfio-pci at boot via
-`vfio-pci-temp.conf` + amdgpu blacklist) wedged the card: live `modprobe -r
-amdgpu` fails ("Module is in use") and sysfs PCI reset is unsupported on this
-device ("Inappropriate ioctl"), so it needs a **reboot** to recover. Two earlier
-commits (8d950eb, 91e99c4) overstated "GPU active" — that was a misread of
-unreliable tool output; the committed golden trace is the `count=0` trace.
-
-GPU tests must run with the Bash sandbox disabled (it masks `/dev/kfd`).
+> GPU tests must run on a fine-grained-memory device (MI300X/gfx942) — see
+> [GPU validation](#gpu-validation-mi300x-gfx942) — and with the Bash sandbox
+> disabled (it masks `/dev/kfd`).
 
 ## Layout
 
 ```
+docs/architecture.svg       architecture diagram (above)
 plans/rust-port-plan.md     full plan + upstream analysis
-scripts/build_c_baseline.sh build the upstream C passthrough libs (reference)
-scripts/run_preload_test.sh run a HIP app through a passthrough .so + interceptor
-tests/apps/hip_smoke.c      deterministic HIP smoke app
-tests/golden/               reference trace + exported-symbol list
-crates/                     Rust workspace (Phase 1+)
+results/BASELINE.md         HRX-vs-CLR + Rust-vs-C libhrx perf tables
+crates/iree-sys             FFI shim that static-links the prebuilt IREE archives
+crates/hrx-libhrx           libhrx_rs.so — the 114 hrx_* public ABI in Rust
+crates/hip-intercept        libhip_intercept.so — LD_PRELOAD HIP passthrough (355 syms)
+crates/hip-function-table   shared #[repr(C)] HIP interceptor ABI
+crates/hip-{logging,buffer-tracer,noop}  pluggable interceptors
+scripts/libhrx_diff_test.sh 7-suite C-vs-Rust functional differential (HRX_RUN_GPU=1)
+scripts/bench_libhrx_parity.sh  Rust-vs-C libhrx public-ABI microbench
+scripts/mi300_validate.sh   end-to-end build + validate on an MI300X host
+tests/apps/                 differential test apps + hip_bench / hrx_bench
 ```
 
 ## Reproduce the Phase 0 baseline
