@@ -532,3 +532,40 @@ pub struct iree_hal_host_call_t {
     pub user_data: *mut c_void,
 }
 pub const IREE_HAL_HOST_CALL_FLAG_NONE: u64 = 0;
+
+/// `iree_hal_device_info_t` (40B): { device_id u64 @0, path sv @8, name sv @24 }.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct iree_hal_device_info_t {
+    pub device_id: u64,
+    pub path: iree_string_view_t,
+    pub name: iree_string_view_t,
+}
+
+extern "C" {
+    // amdgpu driver registration + driver registry + GPU device enumeration.
+    pub fn iree_hal_driver_registry_default() -> *mut c_void;
+    pub fn iree_hal_amdgpu_driver_module_register(registry: *mut c_void) -> iree_status_t;
+    pub fn iree_hal_driver_registry_try_create(
+        registry: *mut c_void,
+        driver_name: iree_string_view_t,
+        host_allocator: iree_allocator_t,
+        out_driver: *mut *mut iree_hal_driver_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_driver_query_available_devices(
+        driver: *mut iree_hal_driver_t,
+        host_allocator: iree_allocator_t,
+        out_device_info_count: *mut iree_host_size_t,
+        out_device_infos: *mut *mut iree_hal_device_info_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_driver_create_device_by_ordinal(
+        driver: *mut iree_hal_driver_t,
+        device_ordinal: iree_host_size_t,
+        param_count: iree_host_size_t,
+        params: *const c_void, // const iree_string_pair_t* (NULL here)
+        create_params: *const iree_hal_device_create_params_t,
+        host_allocator: iree_allocator_t,
+        out_device: *mut *mut iree_hal_device_t,
+    ) -> iree_status_t;
+    // (iree_hal_driver_release + iree_hal_device_query_i64 declared earlier.)
+}

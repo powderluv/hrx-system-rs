@@ -1,10 +1,11 @@
 //! Rust port of libhrx/src/libhrx/runtime.c (shared state + CPU accelerator) and
 //! device.c (device ops). Mirrors the C global-singleton model.
 //!
-//! The GPU accelerator path (hrx_gpu_*) needs the IREE amdgpu HAL driver
-//! registration symbols, which live in a separate archive set; it is deferred.
-//! The CPU/local-task path is fully ported here and is what the MI300 CPU oracle
-//! exercises (and is GPU-host-independent).
+//! Both the CPU/local-task path and the GPU/amdgpu path are ported. The amdgpu
+//! HAL driver-registration archives are already in the linked set, so the GPU
+//! path links + runs on a fine-grained-memory GPU (e.g. MI300X/gfx942).
+//! Profiling (HRX_PROFILE_FILE) is not wired — the default no-profile path is
+//! reproduced (profile_sink == NULL → no-op, matching the C).
 #![allow(non_snake_case)]
 
 use core::ffi::{c_char, c_int, c_void};
@@ -43,9 +44,19 @@ pub struct CpuState {
 }
 unsafe impl Send for CpuState {}
 
+/// GPU accelerator state (amdgpu HAL). Same shape as CpuState.
+pub struct GpuState {
+    pub devices: Vec<*mut HrxDeviceS>,
+    pub device_count: i32,
+    pub initialized: bool,
+    pub driver: *mut iree::iree_hal_driver_t,
+}
+unsafe impl Send for GpuState {}
+
 struct Globals {
     shared: SharedState,
     cpu: CpuState,
+    gpu: GpuState,
 }
 unsafe impl Send for Globals {}
 
@@ -61,6 +72,12 @@ static G: Mutex<Globals> = Mutex::new(Globals {
         initialized: false,
     },
     cpu: CpuState {
+        devices: Vec::new(),
+        device_count: 0,
+        initialized: false,
+        driver: core::ptr::null_mut(),
+    },
+    gpu: GpuState {
         devices: Vec::new(),
         device_count: 0,
         initialized: false,
@@ -423,4 +440,249 @@ fn cstr_array<const N: usize>(s: &str) -> [c_char; N] {
         out[i] = bytes[i] as c_char;
     }
     out
+}
+
+/// Copy raw bytes (e.g. a device_info name) into a fixed [c_char; N], truncating
+/// + NUL-terminating like the C `memcpy(dev->name, info.name.data, len)`.
+unsafe fn cstr_array_from_raw<const N: usize>(data: *const u8, len: usize) -> [c_char; N] {
+    let mut out = [0 as c_char; N];
+    let n = len.min(N - 1);
+    for i in 0..n {
+        out[i] = *data.add(i) as c_char;
+    }
+    out
+}
+
+// gfxip query → "gfx<major><minor><stepping>" (mirror of
+// hrx_set_gpu_architecture_from_hal). On query failure → "unknown".
+unsafe fn gpu_architecture(hal_device: *mut iree::iree_hal_device_t) -> [c_char; 64] {
+    let mut gfxip: i64 = 0;
+    let s = ireei::iree_hal_device_query_i64(
+        hal_device,
+        ireei::iree_string_view_t::cstr(c"hal.device"),
+        ireei::iree_string_view_t::cstr(c"gfxip"),
+        &mut gfxip,
+    );
+    if !iree::status_is_ok(s) {
+        iree::iree_status_free(s);
+        return cstr_array::<64>("unknown");
+    }
+    let major = (gfxip >> 16) & 0xff;
+    let minor = (gfxip >> 8) & 0xff;
+    let stepping = gfxip & 0xff;
+    cstr_array::<64>(&format!("gfx{}{}{}", major, minor, stepping))
+}
+
+#[no_mangle]
+pub extern "C" fn hrx_gpu_initialize(_flags: u32) -> HrxStatus {
+    let mut g = G.lock().unwrap();
+    if g.gpu.initialized {
+        return hrx_make_status(
+            HrxStatusCode::AlreadyExists as i32,
+            c"GPU accelerator already initialized".as_ptr(),
+        );
+    }
+    let s = ensure_shared_state(&mut g);
+    if !hrx_status_is_ok(s) {
+        return s;
+    }
+    let alloc = g.shared.host_allocator;
+    let pool = g.shared.proactor_pool;
+
+    unsafe {
+        // Register the amdgpu driver module (ignore ALREADY_EXISTS == code 6).
+        let registry = ireei::iree_hal_driver_registry_default();
+        let s = ireei::iree_hal_amdgpu_driver_module_register(registry);
+        if !iree::status_is_ok(s) && iree::status_code(s) != 6 {
+            release_shared_state(&mut g);
+            return hrx_status_from_iree(s);
+        }
+        if !iree::status_is_ok(s) {
+            iree::iree_status_free(s);
+        }
+
+        let mut driver: *mut iree::iree_hal_driver_t = core::ptr::null_mut();
+        let s = ireei::iree_hal_driver_registry_try_create(
+            registry,
+            ireei::iree_string_view_t::cstr(c"amdgpu"),
+            alloc,
+            &mut driver,
+        );
+        if !iree::status_is_ok(s) {
+            release_shared_state(&mut g);
+            return hrx_status_from_iree(s);
+        }
+
+        // Enumerate available devices.
+        let mut info_count: usize = 0;
+        let mut infos: *mut ireei::iree_hal_device_info_t = core::ptr::null_mut();
+        let s = ireei::iree_hal_driver_query_available_devices(driver, alloc, &mut info_count, &mut infos);
+        if !iree::status_is_ok(s) {
+            ireei::iree_hal_driver_release(driver);
+            release_shared_state(&mut g);
+            return hrx_status_from_iree(s);
+        }
+        if info_count == 0 {
+            iree::iree_allocator_free(alloc, infos as *mut c_void);
+            ireei::iree_hal_driver_release(driver);
+            release_shared_state(&mut g);
+            return hrx_make_status(HrxStatusCode::Unavailable as i32, c"no GPU devices found".as_ptr());
+        }
+
+        // The amdgpu driver reports a pseudo-device with empty path at ordinal 0
+        // (all-GPUs logical device); HRX exposes the physical ones (path.size != 0).
+        let mut physical_count = 0usize;
+        for i in 0..info_count {
+            if (*infos.add(i)).path.size != 0 {
+                physical_count += 1;
+            }
+        }
+        if physical_count == 0 {
+            iree::iree_allocator_free(alloc, infos as *mut c_void);
+            ireei::iree_hal_driver_release(driver);
+            release_shared_state(&mut g);
+            return hrx_make_status(
+                HrxStatusCode::Unavailable as i32,
+                c"no physical GPU devices found".as_ptr(),
+            );
+        }
+        let count = physical_count.min(HRX_MAX_DEVICES);
+
+        let mut create_params = ireei::iree_hal_device_create_params_t::zeroed();
+        create_params.set_proactor_pool(pool);
+
+        let mut devices: Vec<*mut HrxDeviceS> = Vec::with_capacity(count);
+        let mut created = 0usize;
+        let mut info_index = 0usize;
+        while info_index < info_count && created < count {
+            if (*infos.add(info_index)).path.size == 0 {
+                info_index += 1;
+                continue;
+            }
+            let mut hal_device: *mut iree::iree_hal_device_t = core::ptr::null_mut();
+            let s = ireei::iree_hal_driver_create_device_by_ordinal(
+                driver,
+                info_index,
+                0,
+                core::ptr::null(),
+                &create_params,
+                alloc,
+                &mut hal_device,
+            );
+            if !iree::status_is_ok(s) {
+                for d in &devices {
+                    hrx_device_release(*d);
+                }
+                iree::iree_allocator_free(alloc, infos as *mut c_void);
+                ireei::iree_hal_driver_release(driver);
+                release_shared_state(&mut g);
+                return hrx_status_from_iree(s);
+            }
+
+            let mut device_group: *mut iree::iree_hal_device_group_t = core::ptr::null_mut();
+            let gs = create_single_device_group(hal_device, alloc, &mut device_group);
+            if !iree::status_is_ok(gs) {
+                ireei::iree_hal_device_release(hal_device);
+                for d in &devices {
+                    hrx_device_release(*d);
+                }
+                iree::iree_allocator_free(alloc, infos as *mut c_void);
+                ireei::iree_hal_driver_release(driver);
+                release_shared_state(&mut g);
+                return hrx_status_from_iree(gs);
+            }
+
+            let hal_alloc = ireei::iree_hal_device_allocator(hal_device);
+            ireei::iree_hal_allocator_retain(hal_alloc);
+            let info = *infos.add(info_index);
+            let dev = Box::into_raw(Box::new(HrxDeviceS {
+                ref_count: AtomicI32::new(1),
+                type_: HRX_ACCELERATOR_GPU,
+                ordinal: created as i32,
+                hal_device,
+                hal_device_group: device_group,
+                allocator: HrxAllocatorInline {
+                    ref_count: AtomicI32::new(1),
+                    hal_allocator: hal_alloc,
+                    device: core::ptr::null_mut(),
+                },
+                name: cstr_array_from_raw::<128>(info.name.data, info.name.size),
+                architecture: gpu_architecture(hal_device),
+            }));
+            (*dev).allocator.device = dev;
+            devices.push(dev);
+            created += 1;
+            info_index += 1;
+        }
+
+        iree::iree_allocator_free(alloc, infos as *mut c_void);
+        g.gpu.devices = devices;
+        g.gpu.driver = driver;
+        g.gpu.device_count = created as i32;
+        g.gpu.initialized = true;
+    }
+    hrx_ok_status()
+}
+
+#[no_mangle]
+pub extern "C" fn hrx_gpu_shutdown() -> HrxStatus {
+    let mut g = G.lock().unwrap();
+    if !g.gpu.initialized {
+        return hrx_make_status(
+            HrxStatusCode::InvalidArgument as i32,
+            c"GPU accelerator not initialized".as_ptr(),
+        );
+    }
+    unsafe {
+        let devices = core::mem::take(&mut g.gpu.devices);
+        for d in devices {
+            hrx_device_release(d);
+        }
+        if !g.gpu.driver.is_null() {
+            ireei::iree_hal_driver_release(g.gpu.driver);
+            g.gpu.driver = core::ptr::null_mut();
+        }
+    }
+    g.gpu.device_count = 0;
+    g.gpu.initialized = false;
+    release_shared_state(&mut g);
+    hrx_ok_status()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_gpu_device_count(count: *mut c_int) -> HrxStatus {
+    if count.is_null() {
+        return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"count is NULL".as_ptr());
+    }
+    let g = G.lock().unwrap();
+    if !g.gpu.initialized {
+        return hrx_make_status(
+            HrxStatusCode::Unavailable as i32,
+            c"GPU accelerator not initialized".as_ptr(),
+        );
+    }
+    *count = g.gpu.device_count;
+    hrx_ok_status()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_gpu_device_get(index: c_int, device: *mut HrxDevice) -> HrxStatus {
+    if device.is_null() {
+        return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"device is NULL".as_ptr());
+    }
+    let g = G.lock().unwrap();
+    if !g.gpu.initialized {
+        return hrx_make_status(
+            HrxStatusCode::Unavailable as i32,
+            c"GPU accelerator not initialized".as_ptr(),
+        );
+    }
+    if index < 0 || index >= g.gpu.device_count {
+        return hrx_make_status(
+            HrxStatusCode::OutOfRange as i32,
+            c"GPU device index out of range".as_ptr(),
+        );
+    }
+    *device = g.gpu.devices[index as usize];
+    hrx_ok_status()
 }

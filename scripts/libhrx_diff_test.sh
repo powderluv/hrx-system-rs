@@ -38,12 +38,32 @@ run_diff() { # $1=test-name $2=source.c
   fi
 }
 
+# GPU variant: same as run_diff but with HRX_GPU_DRIVER=amdgpu in the env (needed
+# only by the GPU accel path; harmless elsewhere).
+run_diff_gpu() { # $1=test-name $2=source.c
+  local name="$1" app="$RS/tests/apps/$2"
+  gcc "$app" "$C_LIB"    -Wl,-rpath,"$C_HRXLIB" -o "$OUT/${name}_c"    || return 1
+  gcc "$app" "$RUST_LIB" -Wl,-rpath,"$RS/target/release" -o "$OUT/${name}_rust" || return 1
+  LD_LIBRARY_PATH="$LP" HRX_GPU_DRIVER=amdgpu "$OUT/${name}_c"    > "$OUT/${name}_c.out"    2>&1; local rc_c=$?
+  LD_LIBRARY_PATH="$LP" HRX_GPU_DRIVER=amdgpu "$OUT/${name}_rust" > "$OUT/${name}_rust.out" 2>&1; local rc_r=$?
+  echo "== [$name] C output (rc=$rc_c) =="; cat "$OUT/${name}_c.out"
+  if diff -u "$OUT/${name}_c.out" "$OUT/${name}_rust.out" && [ "$rc_c" = "$rc_r" ]; then
+    echo "OK : [$name] Rust identical to C (rc both=$rc_c)"
+  else
+    echo "DIFF: [$name] (rc_c=$rc_c rc_rust=$rc_r)"; fail=1
+  fi
+}
+
 run_diff abi  hrx_abi_test.c    # status + host_allocator (init-free)
 run_diff init hrx_init_test.c   # cpu init + device + value_list
 run_diff mem    hrx_mem_test.c    # allocator + buffer + transfer
 run_diff stream hrx_stream_test.c # semaphore + stream
 run_diff fence  hrx_fence_test.c  # fence + module/exe error paths
 run_diff queue  hrx_queue_test.c  # direct queue ops
+# GPU accel path — needs a fine-grained-memory GPU (gfx942). Gate on HRX_RUN_GPU=1.
+if [ "${HRX_RUN_GPU:-0}" = "1" ]; then
+  run_diff_gpu gpu hrx_gpu_test.c # GPU accelerator (amdgpu HAL)
+fi
 
 if [ "$fail" = 0 ]; then
   echo "PASS: Rust libhrx output identical to C libhrx (all suites)"
