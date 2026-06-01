@@ -12,10 +12,11 @@
 //!  4. Every exported HIP symbol forwards through the ACTIVE table, so an
 //!     interceptor (C or Rust) sees the calls.
 //!
-//! This crate currently exports the 49 table-routed functions (the set the
-//! interceptor can wrap) plus the two passthrough accessors. The ~272
-//! direct-passthrough symbols from the C file (dlsym + log, bypassing the table)
-//! are added separately so the .so becomes a complete drop-in.
+//! This crate exports the full 355-symbol surface of the C libhip_intercept.so:
+//! the 49 table-routed functions (the set the interceptor can wrap, written
+//! here in lib.rs) plus the two passthrough accessors, plus the ~304
+//! direct-passthrough symbols that dlsym the backend and forward straight to it
+//! (generated into `passthrough_generated.rs` by `generate_passthrough.py`).
 #![allow(non_snake_case)]
 
 use core::ffi::{c_char, c_float, c_int, c_uint, c_void};
@@ -54,6 +55,30 @@ unsafe fn load_sym(lib: *mut c_void, name: &[u8]) -> *mut c_void {
     // name must be NUL-terminated.
     dlsym(lib, name.as_ptr() as *const c_char)
 }
+
+/// Resolve a symbol from the backend library (used by the generated
+/// direct-passthrough trampolines). `name` must be NUL-terminated. Mirrors the
+/// C `dlsym(g_backend_lib, "name")`; the C caches in a per-fn static, we just
+/// re-resolve (dlsym on an already-open handle is a cheap hash lookup).
+#[inline]
+pub(crate) unsafe fn backend_sym(name: &[u8]) -> *mut c_void {
+    ensure_init();
+    let lib = G_BACKEND_LIB.load(Ordering::Acquire);
+    if lib.is_null() {
+        return ptr::null_mut();
+    }
+    dlsym(lib, name.as_ptr() as *const c_char)
+}
+
+/// 64-byte IPC handle structs (`hipIpcMemHandle_t` / `hipIpcEventHandle_t`),
+/// passed by value in a few APIs. Layout matches `char reserved[64]`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct HipIpcHandle {
+    pub reserved: [u8; 64],
+}
+
+mod passthrough_generated;
 
 /// Resolve every table slot from the backend via dlsym. The macro maps each
 /// field to its C symbol name and transmutes the resolved pointer to the
@@ -139,7 +164,7 @@ fn intercept_init() {
     }
 }
 
-fn ensure_init() {
+pub(crate) fn ensure_init() {
     INIT.call_once(intercept_init);
 }
 
