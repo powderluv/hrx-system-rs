@@ -1,0 +1,12 @@
+[package]
+name = "hip-noop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+hip-function-table = { path = "../hip-function-table" }
+
+[lib]
+name = "hip_noop"
+crate-type = ["cdylib"]

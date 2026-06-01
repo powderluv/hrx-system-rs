@@ -45,6 +45,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hip-noop"
+version = "0.1.0"
+dependencies = [
+ "hip-function-table",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
