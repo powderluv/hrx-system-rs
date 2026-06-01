@@ -1,0 +1,18 @@
+[package]
+name = "hrx-libhrx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+# Rust reimplementation of libhrx (the public HRX C ABI), built over iree-sys.
+# Produces libhrx_rs.so exporting the hrx_* C ABI; the GPU-independent modules
+# (status, host_allocator, value_list) come first.
+[dependencies]
+iree-sys = { path = "../iree-sys" }
+libc = "0.2"
+ctor = "0.2"
+
+[lib]
+name = "hrx_rs"
+crate-type = ["cdylib", "rlib"]

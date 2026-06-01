@@ -52,6 +52,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hrx-libhrx"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "iree-sys",
+ "libc",
+]
+
+[[package]]
 name = "iree-sys"
 version = "0.1.0"
 dependencies = [
