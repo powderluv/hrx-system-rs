@@ -53,12 +53,16 @@ pub struct iree_const_byte_span_t {
     pub data_length: iree_host_size_t,
 }
 
-/// `iree_vm_value_t` — a tagged 8-byte union. `type_` is the value-type enum,
-/// `storage` holds the payload (i64 occupies all 8 bytes).
-#[repr(C)]
+/// `iree_vm_value_t` = `{ i32 type; union { ...; i64; u8[8] } }`. The union is
+/// 8-byte aligned, so the struct is 16 bytes: `type_` at offset 0, 4 bytes
+/// padding, then the 8-byte payload at offset 8. A naive `{i32, [u8;8]}` would
+/// be 12 bytes and place the i64 at offset 4 — wrong. The explicit `_pad` +
+/// `align(8)` reproduces the real layout.
+#[repr(C, align(8))]
 #[derive(Clone, Copy)]
 pub struct iree_vm_value_t {
     pub type_: i32,
+    pub _pad: i32,
     pub storage: [u8; 8],
 }
 
@@ -66,6 +70,7 @@ impl iree_vm_value_t {
     pub fn make_i64(v: i64) -> Self {
         iree_vm_value_t {
             type_: IREE_VM_VALUE_TYPE_I64,
+            _pad: 0,
             storage: v.to_ne_bytes(),
         }
     }

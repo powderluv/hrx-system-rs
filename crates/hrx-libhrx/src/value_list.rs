@@ -125,7 +125,7 @@ pub unsafe extern "C" fn hrx_value_list_get_i64(
             c"list or value is NULL".as_ptr(),
         );
     }
-    let mut vm_value = iree::iree_vm_value_t { type_: 0, storage: [0; 8] };
+    let mut vm_value = iree::iree_vm_value_t { type_: 0, _pad: 0, storage: [0; 8] };
     let status = iree::iree_vm_list_get_value_as(
         (*list).vm_list,
         index,
