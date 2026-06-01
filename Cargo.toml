@@ -6,6 +6,7 @@ members = [
     "crates/hip-intercept",
     "crates/hip-buffer-tracer",
     "crates/hip-noop",
+    "crates/iree-sys",
 ]
 
 [workspace.package]

@@ -1,0 +1,15 @@
+[package]
+name = "iree-sys"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+# Low-level FFI to the IREE C runtime + HRX streaming layer, linked from the
+# static archives produced by the hrx-system CMake build. This is the substrate
+# the Rust libhrx reimplementation calls into.
+[lib]
+name = "iree_sys"
+
+[dependencies]
+libc = "0.2"
