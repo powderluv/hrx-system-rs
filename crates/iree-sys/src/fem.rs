@@ -20,6 +20,12 @@ pub type iree_hal_executable_t = c_void;
 pub type iree_hal_executable_cache_t = c_void;
 pub type iree_vm_module_t = c_void;
 pub type iree_vm_context_t = c_void;
+pub type iree_hal_buffer_view_t = c_void;
+
+pub type iree_hal_dim_t = u64;
+pub type iree_hal_element_type_t = u32;
+pub type iree_hal_encoding_type_t = u32;
+pub const IREE_HAL_ENCODING_TYPE_DENSE_ROW_MAJOR: u32 = 1;
 
 /// `iree_hal_executable_function_t` (8B): a single u64 handle value.
 #[repr(C)]
@@ -222,4 +228,27 @@ extern "C" {
         outputs: *mut iree_vm_list_t,
         host_allocator: iree_allocator_t,
     ) -> iree_status_t;
+
+    // --- buffer view ---
+    pub fn iree_hal_buffer_view_create(
+        buffer: *mut super::init::iree_hal_buffer_t,
+        shape_rank: iree_host_size_t,
+        shape: *const iree_hal_dim_t,
+        element_type: iree_hal_element_type_t,
+        encoding_type: iree_hal_encoding_type_t,
+        host_allocator: iree_allocator_t,
+        out_buffer_view: *mut *mut iree_hal_buffer_view_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_buffer_view_retain(buffer_view: *mut iree_hal_buffer_view_t);
+    pub fn iree_hal_buffer_view_release(buffer_view: *mut iree_hal_buffer_view_t);
+    pub fn iree_hal_buffer_view_shape_rank(buffer_view: *mut iree_hal_buffer_view_t) -> iree_host_size_t;
+    pub fn iree_hal_buffer_view_shape_dim(
+        buffer_view: *mut iree_hal_buffer_view_t,
+        index: iree_host_size_t,
+    ) -> iree_hal_dim_t;
+
+    // --- vm ref adapters (return iree_vm_ref_t by value, 16B) ---
+    pub fn iree_hal_buffer_retain_ref(buffer: *mut super::init::iree_hal_buffer_t) -> iree_vm_ref_t;
+    pub fn iree_hal_buffer_view_retain_ref(buffer_view: *mut iree_hal_buffer_view_t) -> iree_vm_ref_t;
+    pub fn iree_hal_fence_retain_ref(fence: *mut iree_hal_fence_t) -> iree_vm_ref_t;
 }

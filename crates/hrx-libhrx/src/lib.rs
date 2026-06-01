@@ -6,6 +6,7 @@
 //! Device/stream/buffer modules follow.
 
 mod buffer;
+mod buffer_view;
 mod common;
 mod device;
 mod executable;
@@ -19,6 +20,7 @@ mod stream;
 mod value_list;
 
 pub use buffer::{HrxBuffer, HrxBufferParams, HrxBufferS};
+pub use buffer_view::{HrxBufferView, HrxBufferViewS};
 pub use common::{HrxHostAllocator, HrxStatus, HrxStatusCode, HrxStatusS};
 pub use device::{HrxDevice, HrxDeviceS};
 pub use executable::{HrxExecutable, HrxExecutableExportInfo, HrxExecutableS};

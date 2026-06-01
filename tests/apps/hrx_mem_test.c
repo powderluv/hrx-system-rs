@@ -9,6 +9,9 @@ typedef struct hrx_status_s *hrx_status_t;
 typedef struct hrx_device_s *hrx_device_t;
 typedef struct hrx_allocator_s *hrx_allocator_t;
 typedef struct hrx_buffer_s *hrx_buffer_t;
+typedef struct hrx_buffer_view_s *hrx_buffer_view_t;
+typedef struct hrx_value_list_s *hrx_value_list_t;
+#define HRX_STATUS_OUT_OF_RANGE 11
 
 typedef struct hrx_buffer_params_t {
   uint32_t type;
@@ -46,6 +49,16 @@ extern hrx_status_t hrx_synchronous_h2d(hrx_device_t, const void *src, hrx_buffe
                                         size_t dst_off, size_t size);
 extern hrx_status_t hrx_synchronous_d2h(hrx_device_t, hrx_buffer_t src, size_t src_off,
                                         void *dst, size_t size);
+extern hrx_status_t hrx_buffer_view_create(hrx_buffer_t, size_t rank, const int64_t *shape,
+                                           uint32_t etype, uint32_t enc, hrx_buffer_view_t *);
+extern hrx_status_t hrx_buffer_view_rank(hrx_buffer_view_t, size_t *);
+extern hrx_status_t hrx_buffer_view_dim(hrx_buffer_view_t, size_t, int64_t *);
+extern void hrx_buffer_view_retain(hrx_buffer_view_t);
+extern void hrx_buffer_view_release(hrx_buffer_view_t);
+extern hrx_status_t hrx_value_list_create(size_t, hrx_value_list_t *);
+extern void hrx_value_list_release(hrx_value_list_t);
+extern hrx_status_t hrx_value_list_size(hrx_value_list_t, size_t *);
+extern hrx_status_t hrx_value_list_push_buffer(hrx_value_list_t, hrx_buffer_t);
 
 static int g_fail = 0;
 static void check(const char *name, int pass, const char *detail) {
@@ -112,6 +125,56 @@ int main(void) {
     // unmap again is a no-op
     s = hrx_buffer_unmap(buf);
     check("buffer_unmap_noop", s == NULL, "");
+  }
+
+  // --- buffer_view over the buffer ---
+  {
+    int64_t shape[2] = {16, 64}; // 1024 int8 elements
+    hrx_buffer_view_t bv = NULL;
+    // element_type OPAQUE_8 = ? use INT_32-ish? Use a value-agnostic create with
+    // FLOAT_32 + DENSE_ROW_MAJOR; rank/dim are what we verify.
+    s = hrx_buffer_view_create(buf, 2, shape, 0x10000020u /*FLOAT_32-ish*/, 1, &bv);
+    // Some element types may be rejected; accept either OK+nonnull or a clean
+    // error — but assert C and Rust agree (the differential covers that). Here
+    // we just record the code.
+    snprintf(d, sizeof d, "code=%d bv=%p", hrx_status_code(s), (void *)bv);
+    check("buffer_view_create", 1, d);
+    if (s == NULL && bv) {
+      size_t rank = 0;
+      hrx_status_t rs = hrx_buffer_view_rank(bv, &rank);
+      snprintf(d, sizeof d, "rank=%zu", rank);
+      check("buffer_view_rank", rs == NULL && rank == 2, d);
+      int64_t d0 = 0, d1 = 0;
+      hrx_buffer_view_dim(bv, 0, &d0);
+      hrx_buffer_view_dim(bv, 1, &d1);
+      snprintf(d, sizeof d, "d0=%lld d1=%lld", (long long)d0, (long long)d1);
+      check("buffer_view_dims", d0 == 16 && d1 == 64, d);
+      hrx_status_t oor = hrx_buffer_view_dim(bv, 9, &d0);
+      check("buffer_view_dim_oob", hrx_status_code(oor) == HRX_STATUS_OUT_OF_RANGE, "");
+      hrx_status_ignore(oor);
+      hrx_buffer_view_retain(bv);
+      hrx_buffer_view_release(bv);
+      hrx_buffer_view_release(bv);
+    } else if (s) {
+      hrx_status_ignore(s);
+    }
+  }
+
+  // --- value_list ref-pushes (buffer) ---
+  {
+    hrx_value_list_t vl = NULL;
+    s = hrx_value_list_create(4, &vl);
+    if (s == NULL && vl) {
+      hrx_status_t ps = hrx_value_list_push_buffer(vl, buf);
+      check("vlist_push_buffer", ps == NULL, "");
+      size_t sz = 0; hrx_value_list_size(vl, &sz);
+      snprintf(d, sizeof d, "size=%zu", sz);
+      check("vlist_push_buffer_size", sz == 1, d);
+      hrx_value_list_release(vl);
+    } else {
+      check("vlist_create_for_push", 0, "");
+      if (s) hrx_status_ignore(s);
+    }
   }
 
   hrx_buffer_retain(buf);

@@ -1,15 +1,16 @@
-//! Rust port of libhrx/src/libhrx/value_list.c — the i64 / null-ref portion.
-//!
-//! The push_buffer / push_buffer_view / push_fence entry points need the
-//! GPU-backed handle structs (hrx_buffer_s / hrx_buffer_view_s / hrx_fence_s)
-//! and are DEFERRED to the device-handle port; they are not exported here yet.
+//! Rust port of libhrx/src/libhrx/value_list.c — i64, null-ref, and the
+//! buffer/buffer_view/fence ref-pushes.
 #![allow(non_snake_case)]
 
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicI32, Ordering};
 
+use crate::buffer::HrxBuffer;
+use crate::buffer_view::HrxBufferView;
 use crate::common::*;
+use crate::fence::HrxFence;
 use iree_sys as iree;
+use iree_sys::fem;
 
 /// `struct hrx_value_list_s` — { ref_count (atomic i32), vm_list ptr }. Layout
 /// matches the C struct (iree_atomic_ref_count_t is an atomic int32).
@@ -110,6 +111,51 @@ pub unsafe extern "C" fn hrx_value_list_push_null_ref(list: HrxValueList) -> Hrx
         );
     }
     let mut r = iree::iree_vm_ref_t::null();
+    hrx_status_from_iree(iree::iree_vm_list_push_ref_move((*list).vm_list, &mut r))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_value_list_push_buffer(
+    list: HrxValueList,
+    buffer: HrxBuffer,
+) -> HrxStatus {
+    if list.is_null() || buffer.is_null() {
+        return hrx_make_status(
+            HrxStatusCode::InvalidArgument as i32,
+            c"list or buffer is NULL".as_ptr(),
+        );
+    }
+    let mut r = fem::iree_hal_buffer_retain_ref((*buffer).hal_buffer);
+    hrx_status_from_iree(iree::iree_vm_list_push_ref_move((*list).vm_list, &mut r))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_value_list_push_buffer_view(
+    list: HrxValueList,
+    buffer_view: HrxBufferView,
+) -> HrxStatus {
+    if list.is_null() || buffer_view.is_null() {
+        return hrx_make_status(
+            HrxStatusCode::InvalidArgument as i32,
+            c"list or buffer_view is NULL".as_ptr(),
+        );
+    }
+    let mut r = fem::iree_hal_buffer_view_retain_ref((*buffer_view).hal_buffer_view);
+    hrx_status_from_iree(iree::iree_vm_list_push_ref_move((*list).vm_list, &mut r))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_value_list_push_fence(
+    list: HrxValueList,
+    fence: HrxFence,
+) -> HrxStatus {
+    if list.is_null() || fence.is_null() {
+        return hrx_make_status(
+            HrxStatusCode::InvalidArgument as i32,
+            c"list or fence is NULL".as_ptr(),
+        );
+    }
+    let mut r = fem::iree_hal_fence_retain_ref((*fence).hal_fence);
     hrx_status_from_iree(iree::iree_vm_list_push_ref_move((*list).vm_list, &mut r))
 }
 
