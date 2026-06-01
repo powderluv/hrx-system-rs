@@ -21,6 +21,21 @@ pub type iree_vm_list_t = c_void;
 
 pub const IREE_STATUS_CODE_MASK: usize = 0x1F;
 pub const IREE_VM_VALUE_TYPE_I64: i32 = 4;
+pub const IREE_VM_TYPE_CAPACITY_DEFAULT: iree_host_size_t = 32;
+pub const IREE_ASYNC_WAIT_MODE_ALL: i32 = 0;
+
+// Opaque IREE handle types (always behind pointers).
+pub type iree_vm_instance_t = c_void;
+pub type iree_async_proactor_pool_t = c_void;
+pub type iree_async_frontier_tracker_t = c_void;
+pub type iree_task_executor_t = c_void;
+pub type iree_hal_executable_loader_t = c_void;
+pub type iree_hal_allocator_t = c_void;
+pub type iree_hal_driver_t = c_void;
+pub type iree_hal_device_t = c_void;
+pub type iree_hal_device_group_t = c_void;
+
+pub mod init;
 
 /// `iree_allocator_t` — a {self, ctl-fn} pair (2 words). Layout-stable C ABI.
 #[repr(C)]

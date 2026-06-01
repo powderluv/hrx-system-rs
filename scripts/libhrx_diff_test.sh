@@ -19,23 +19,30 @@ echo "== build Rust libhrx_rs.so =="
 RUST_LIB="$RS/target/release/libhrx_rs.so"
 C_LIB="$C_HRXLIB/libhrx.so.0"
 
-APP="$RS/tests/apps/hrx_abi_test.c"
-# Build one binary per backend (link directly; both export the same hrx_* ABI).
-gcc "$APP" "$C_LIB"    -Wl,-rpath,"$C_HRXLIB" -o "$OUT/abi_c"    || exit 1
-gcc "$APP" "$RUST_LIB" -Wl,-rpath,"$RS/target/release" -o "$OUT/abi_rust" || exit 1
-
-# The C libhrx.so pulls in IREE which may want HSA at load even for these calls;
-# provide the ROCm libs on the path. The Rust .so links IREE statically.
+# The C libhrx.so pulls in IREE which may want HSA at load; provide the ROCm
+# libs on the path. The Rust .so links IREE statically.
 LP="$C_HRXLIB:$CORE/lib:$DEVEL/lib:$SYSDEPS"
-echo "== run C backend =="
-LD_LIBRARY_PATH="$LP" "$OUT/abi_c"   > "$OUT/c.out" 2>&1; echo "C rc=$?"
-echo "== run Rust backend =="
-LD_LIBRARY_PATH="$LP" "$OUT/abi_rust" > "$OUT/rust.out" 2>&1; echo "Rust rc=$?"
 
-echo "== C output =="; cat "$OUT/c.out"
-echo "== diff (C vs Rust) =="
-if diff -u "$OUT/c.out" "$OUT/rust.out"; then
-  echo "PASS: Rust libhrx output identical to C libhrx"
+fail=0
+run_diff() { # $1=test-name $2=source.c
+  local name="$1" app="$RS/tests/apps/$2"
+  gcc "$app" "$C_LIB"    -Wl,-rpath,"$C_HRXLIB" -o "$OUT/${name}_c"    || return 1
+  gcc "$app" "$RUST_LIB" -Wl,-rpath,"$RS/target/release" -o "$OUT/${name}_rust" || return 1
+  LD_LIBRARY_PATH="$LP" "$OUT/${name}_c"    > "$OUT/${name}_c.out"    2>&1; local rc_c=$?
+  LD_LIBRARY_PATH="$LP" "$OUT/${name}_rust" > "$OUT/${name}_rust.out" 2>&1; local rc_r=$?
+  echo "== [$name] C output (rc=$rc_c) =="; cat "$OUT/${name}_c.out"
+  if diff -u "$OUT/${name}_c.out" "$OUT/${name}_rust.out" && [ "$rc_c" = "$rc_r" ]; then
+    echo "OK : [$name] Rust identical to C (rc both=$rc_c)"
+  else
+    echo "DIFF: [$name] (rc_c=$rc_c rc_rust=$rc_r)"; fail=1
+  fi
+}
+
+run_diff abi  hrx_abi_test.c    # status + host_allocator (init-free)
+run_diff init hrx_init_test.c   # cpu init + device + value_list
+
+if [ "$fail" = 0 ]; then
+  echo "PASS: Rust libhrx output identical to C libhrx (all suites)"
 else
   echo "FAIL: outputs differ"; exit 1
 fi
