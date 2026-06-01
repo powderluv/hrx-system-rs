@@ -20,6 +20,58 @@ use core::ffi::c_void;
 pub const IREE_TIME_INFINITE_FUTURE: i64 = i64::MAX;
 pub const IREE_TIMEOUT_ABSOLUTE: i32 = 0;
 
+// HAL buffer constants (iree/hal/buffer.h).
+pub const IREE_HAL_MAPPING_MODE_SCOPED: u32 = 1;
+pub const IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT: u32 = 0;
+pub const IREE_HAL_MEMORY_ACCESS_READ: u16 = 1 << 0;
+pub const IREE_HAL_MEMORY_ACCESS_WRITE: u16 = 1 << 1;
+pub const IREE_HAL_MEMORY_ACCESS_DISCARD: u16 = 1 << 2;
+pub const IREE_HAL_MEMORY_ACCESS_DISCARD_WRITE: u16 =
+    IREE_HAL_MEMORY_ACCESS_WRITE | IREE_HAL_MEMORY_ACCESS_DISCARD;
+pub const IREE_HAL_MEMORY_ACCESS_ALL: u16 = 7;
+pub const IREE_HAL_BUFFER_COMPATIBILITY_ALLOCATABLE: u32 = 1 << 0;
+
+pub type iree_device_size_t = u64;
+pub type iree_hal_buffer_t = c_void;
+pub type iree_hal_physical_memory_t = c_void;
+
+/// `iree_hal_buffer_params_t` (32 B, probed): usage u32 @0, access u16 @4,
+/// type u32 @8, queue_affinity u64 @16.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct iree_hal_buffer_params_t {
+    pub usage: u32,
+    pub access: u16,
+    pub _pad0: u16,
+    pub type_: u32,
+    pub _pad1: u32,
+    pub queue_affinity: u64,
+}
+
+/// `iree_byte_span_t` = { u8* data; size_t length }.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct iree_byte_span_t {
+    pub data: *mut u8,
+    pub data_length: iree_host_size_t,
+}
+
+/// `iree_hal_buffer_mapping_t` (48 B, probed). We only read `contents.data`
+/// after a scoped map; the rest is opaque storage IREE fills. `contents` @0.
+#[repr(C, align(8))]
+pub struct iree_hal_buffer_mapping_t {
+    pub contents: iree_byte_span_t, // 16 B @ 0
+    pub _rest: [u8; 32],            // 48 - 16
+}
+impl iree_hal_buffer_mapping_t {
+    pub fn zeroed() -> Self {
+        iree_hal_buffer_mapping_t {
+            contents: iree_byte_span_t { data: core::ptr::null_mut(), data_length: 0 },
+            _rest: [0; 32],
+        }
+    }
+}
+
 /// `iree_string_view_t` = { const char* data; size_t size }.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -237,5 +289,53 @@ extern "C" {
         category: iree_string_view_t,
         key: iree_string_view_t,
         out_value: *mut i64,
+    ) -> iree_status_t;
+
+    // --- HAL allocator: buffer allocation/import + compatibility ---
+    pub fn iree_hal_allocator_allocate_buffer(
+        allocator: *mut iree_hal_allocator_t,
+        params: iree_hal_buffer_params_t, // BY VALUE (32B)
+        allocation_size: iree_device_size_t,
+        out_buffer: *mut *mut iree_hal_buffer_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_allocator_query_buffer_compatibility(
+        allocator: *mut iree_hal_allocator_t,
+        params: iree_hal_buffer_params_t,
+        allocation_size: iree_device_size_t,
+        out_params: *mut iree_hal_buffer_params_t,
+        out_allocation_size: *mut iree_device_size_t,
+    ) -> u32; // iree_hal_buffer_compatibility_t (bitfield)
+
+    // --- HAL buffer: retain/release/map/unmap ---
+    pub fn iree_hal_buffer_retain(buffer: *mut iree_hal_buffer_t);
+    pub fn iree_hal_buffer_release(buffer: *mut iree_hal_buffer_t);
+    pub fn iree_hal_buffer_map_range(
+        buffer: *mut iree_hal_buffer_t,
+        mapping_mode: u32,
+        memory_access: u16,
+        byte_offset: iree_device_size_t,
+        byte_length: iree_device_size_t,
+        out_mapping: *mut iree_hal_buffer_mapping_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_buffer_unmap_range(mapping: *mut iree_hal_buffer_mapping_t) -> iree_status_t;
+
+    // --- synchronous transfers ---
+    pub fn iree_hal_device_transfer_h2d(
+        device: *mut iree_hal_device_t,
+        source: *const c_void,
+        target: *mut iree_hal_buffer_t,
+        target_offset: iree_device_size_t,
+        data_length: iree_device_size_t,
+        flags: u32,
+        timeout: iree_timeout_t,
+    ) -> iree_status_t;
+    pub fn iree_hal_device_transfer_d2h(
+        device: *mut iree_hal_device_t,
+        source: *mut iree_hal_buffer_t,
+        source_offset: iree_device_size_t,
+        target: *mut c_void,
+        data_length: iree_device_size_t,
+        flags: u32,
+        timeout: iree_timeout_t,
     ) -> iree_status_t;
 }

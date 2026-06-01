@@ -326,10 +326,13 @@ pub extern "C" fn hrx_cpu_initialize(_flags: u32) -> HrxStatus {
             allocator: HrxAllocatorInline {
                 ref_count: AtomicI32::new(1),
                 hal_allocator: hal_alloc,
+                device: core::ptr::null_mut(), // set just below
             },
             name: cstr_array::<128>("CPU 0 (local-task)"),
             architecture: cstr_array::<64>("host"),
         }));
+        // dev->allocator.device = dev (back-pointer used by hrx_allocator_*).
+        (*dev).allocator.device = dev;
 
         g.cpu.devices.clear();
         g.cpu.devices.push(dev);

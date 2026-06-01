@@ -20,16 +20,14 @@ const HRX_DEVICE_PROPERTY_TOTAL_MEMORY: i32 = 2;
 const HRX_DEVICE_PROPERTY_COMPUTE_UNITS: i32 = 3;
 const HRX_DEVICE_PROPERTY_MAX_WORKGROUP_SIZE: i32 = 4;
 
-/// Inline allocator (hrx_allocator_s) — owned by the device. Field order matches
-/// the C struct: { ref_count, hal_allocator, device }. We omit the back-pointer
-/// `device` field's use but keep layout via the two leading fields the C reads;
-/// since callers never inspect this inline struct's tail by offset, we keep
-/// only what's needed. (The C struct also has a `device` back-pointer; we model
-/// it implicitly — nothing reads it across the ABI.)
+/// Inline allocator (hrx_allocator_s) — owned by the device. C layout:
+/// { ref_count, hal_allocator, device }. The `device` back-pointer is used by
+/// the allocator API (hrx_allocator_retain/release/allocate_buffer).
 #[repr(C)]
 pub struct HrxAllocatorInline {
     pub ref_count: AtomicI32,
     pub hal_allocator: *mut iree::iree_hal_allocator_t,
+    pub device: HrxDevice,
 }
 
 /// hrx_device_s. The C layout is:

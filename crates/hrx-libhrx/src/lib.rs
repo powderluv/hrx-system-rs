@@ -5,6 +5,7 @@
 //! GPU-independent modules: status, host_allocator, value_list (i64/null_ref).
 //! Device/stream/buffer modules follow.
 
+mod buffer;
 mod common;
 mod device;
 mod host_allocator;
@@ -12,6 +13,7 @@ mod runtime;
 mod status;
 mod value_list;
 
+pub use buffer::{HrxBuffer, HrxBufferParams, HrxBufferS};
 pub use common::{HrxHostAllocator, HrxStatus, HrxStatusCode, HrxStatusS};
 pub use device::{HrxDevice, HrxDeviceS};
 pub use value_list::HrxValueListS;
