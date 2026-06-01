@@ -74,7 +74,9 @@ int main(void) {
   snprintf(d, sizeof d, "code=%d", hrx_status_code(s));
   check("queue_barrier", s == NULL, d);
   if (s == NULL) {
-    uint64_t v = 0; hrx_semaphore_query(sem, &v);
+    // The barrier signals asynchronously on the queue; poll until reached.
+    uint64_t v = 0;
+    for (int i = 0; i < 1000000 && v < 1; ++i) hrx_semaphore_query(sem, &v);
     snprintf(d, sizeof d, "sem=%llu", (unsigned long long)v);
     check("queue_barrier_signaled", v >= 1, d);
   } else hrx_status_ignore(s);
