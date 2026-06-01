@@ -13,6 +13,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hip-buffer-tracer"
+version = "0.1.0"
+dependencies = [
+ "hip-function-table",
+ "libc",
+]
+
+[[package]]
 name = "hip-function-table"
 version = "0.1.0"
 dependencies = [
