@@ -108,6 +108,15 @@ pub(crate) fn shared_vm_instance() -> (*mut iree::iree_vm_instance_t, bool) {
     (g.shared.vm_instance, g.shared.initialized)
 }
 
+/// Snapshot of (proactor_pool, host_allocator) under the global lock, for the
+/// hrx exact pool (mirrors `hrx_get_shared_state()->{proactor_pool,host_allocator}`).
+/// proactor_pool is NULL if shared state isn't initialized.
+pub(crate) fn shared_proactor_and_host_allocator(
+) -> (*mut iree::iree_async_proactor_pool_t, iree::iree_allocator_t) {
+    let g = G.lock().unwrap();
+    (g.shared.proactor_pool, g.shared.host_allocator)
+}
+
 /// Mirror of hrx_ensure_shared_state (idempotent; bumps init_count).
 fn ensure_shared_state(g: &mut Globals) -> HrxStatus {
     if g.shared.initialized {

@@ -59,6 +59,7 @@ typedef struct hrx_dispatch_config_t {
 extern hrx_status_t hrx_stream_dispatch(hrx_stream_t, hrx_executable_t, uint32_t,
                                         const hrx_dispatch_config_t *, const void *, size_t,
                                         const hrx_buffer_ref_t *, size_t, uint32_t);
+extern hrx_status_t hrx_buffer_allocate(hrx_stream_t, size_t, uint32_t, uint32_t, hrx_buffer_t *);
 
 static int g_fail = 0;
 static void check(const char *n, int pass, const char *d) {
@@ -153,6 +154,16 @@ int main(void) {
   hrx_status_t de2 = hrx_stream_dispatch(st, NULL, 0, &cfg, NULL, 0, NULL, 0, 0);
   check("stream_dispatch_null_exe_errors", hrx_status_code(de2) == 3, "");
   hrx_status_ignore(de2);
+
+  // buffer_allocate argument validation (deterministic on any backend; the real
+  // queue-alloca path is exercised by the GPU suite).
+  hrx_buffer_t ba = NULL;
+  hrx_status_t bae = hrx_buffer_allocate(NULL, 16, 0x46, 0x0C03, &ba);
+  check("buffer_allocate_null_stream_errors", hrx_status_code(bae) == 3, "");
+  hrx_status_ignore(bae);
+  hrx_status_t bze = hrx_buffer_allocate(st, 0, 0x46, 0x0C03, &ba);
+  check("buffer_allocate_zero_size_errors", hrx_status_code(bze) == 3, "");
+  hrx_status_ignore(bze);
 
   hrx_stream_release(st);
   s = hrx_cpu_shutdown();

@@ -1,8 +1,7 @@
 //! Rust port of libhrx/src/libhrx/{allocator,buffer,transfer}.c — the memory
-//! path. The allocator-based allocate/import, buffer map/unmap/ptr/size/lifetime,
-//! and synchronous h2d/d2h transfers are ported. The stream-based
-//! hrx_buffer_allocate (queue alloca + exact pool) is DEFERRED to the stream
-//! module.
+//! path. The allocator-based allocate/import, virtual/physical memory, buffer
+//! map/unmap/ptr/size/lifetime, synchronous h2d/d2h transfers, and the
+//! stream-ordered hrx_buffer_allocate (queue alloca + hrx exact pool) are ported.
 #![allow(non_snake_case)]
 
 #[allow(unused_imports)] use core::ffi::c_void;
@@ -10,6 +9,8 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::common::*;
 use crate::device::{hrx_device_release, hrx_device_retain, HrxAllocatorInline, HrxDevice};
+use crate::pool::hrx_iree_exact_pool_create;
+use crate::stream::{hrx_stream_flush, HrxStream};
 use iree_sys as iree;
 use iree_sys::fem;
 use iree_sys::init as ireei;
@@ -39,7 +40,7 @@ pub struct HrxBufferParams {
 pub struct HrxBufferS {
     pub ref_count: AtomicI32,
     pub hal_buffer: *mut ireei::iree_hal_buffer_t,
-    pub hal_pool: *mut c_void, // iree_hal_pool_t* (unused on the allocator path)
+    pub hal_pool: *mut c_void, // iree_hal_pool_t* (set on the stream-alloca path)
     pub device: HrxDevice,
     pub mem_type: u32,
     pub size: usize,
@@ -98,6 +99,7 @@ pub unsafe extern "C" fn hrx_allocator_allocate_buffer(
         type_: params.type_,
         _pad1: 0,
         queue_affinity: params.queue_affinity,
+        min_alignment: 0,
     };
     let mut hal_buffer: *mut ireei::iree_hal_buffer_t = core::ptr::null_mut();
     let s = ireei::iree_hal_allocator_allocate_buffer(
@@ -129,8 +131,9 @@ pub unsafe extern "C" fn hrx_allocator_allocate_buffer(
 #[no_mangle]
 pub unsafe extern "C" fn hrx_buffer_retain(buffer: HrxBuffer) {
     ireei::iree_hal_buffer_retain((*buffer).hal_buffer);
-    // hal_pool is null on the allocator path; iree_hal_pool_retain(NULL) is a
-    // no-op in C, so we skip it when null.
+    // hal_pool is non-null only on the stream-alloca path; iree_hal_pool_retain
+    // is NULL-safe, matching the C unconditional call.
+    ireei::iree_hal_pool_retain((*buffer).hal_pool);
     hrx_device_retain((*buffer).device);
     (*buffer).ref_count.fetch_add(1, Ordering::Relaxed);
 }
@@ -145,6 +148,7 @@ unsafe fn buffer_unmap_internal(buffer: HrxBuffer) -> iree::iree_status_t {
 #[no_mangle]
 pub unsafe extern "C" fn hrx_buffer_release(buffer: HrxBuffer) {
     let hal_buffer = (*buffer).hal_buffer;
+    let hal_pool = (*buffer).hal_pool;
     let device = (*buffer).device;
     if (*buffer).ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
         if (*buffer).is_mapped {
@@ -154,6 +158,7 @@ pub unsafe extern "C" fn hrx_buffer_release(buffer: HrxBuffer) {
         libc::free(buffer as *mut c_void);
     }
     ireei::iree_hal_buffer_release(hal_buffer);
+    ireei::iree_hal_pool_release(hal_pool); // NULL-safe; matches C
     hrx_device_release(device);
 }
 
@@ -345,6 +350,7 @@ pub unsafe extern "C" fn hrx_allocator_import_buffer(
         type_: params.type_,
         _pad1: 0,
         queue_affinity: params.queue_affinity,
+        min_alignment: 0,
     };
     let mut ext = fem::iree_hal_external_buffer_t {
         type_: fem::IREE_HAL_EXTERNAL_BUFFER_TYPE_HOST_ALLOCATION,
@@ -403,6 +409,7 @@ pub unsafe extern "C" fn hrx_allocator_query_virtual_memory(
         type_: mem_type,
         _pad1: 0,
         queue_affinity: 0,
+        min_alignment: 0,
     };
     let mut min: u64 = 0;
     let mut rec: u64 = 0;
@@ -482,6 +489,7 @@ pub unsafe extern "C" fn hrx_allocator_physical_memory_allocate(
         type_: mem_type,
         _pad1: 0,
         queue_affinity: 0,
+        min_alignment: 0,
     };
     hrx_status_from_iree(fem::iree_hal_allocator_physical_memory_allocate(
         (*allocator).hal_allocator,
@@ -562,4 +570,107 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_protect(
         ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
         protection,
     ))
+}
+
+// --- stream-ordered allocation (buffer.c hrx_buffer_allocate) ---
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_buffer_allocate(
+    stream: HrxStream,
+    size: usize,
+    mem_type: u32,
+    usage: u32,
+    buffer: *mut HrxBuffer,
+) -> HrxStatus {
+    if stream.is_null() || buffer.is_null() {
+        return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"stream or buffer is NULL".as_ptr());
+    }
+    if size == 0 {
+        return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"allocation size must be > 0".as_ptr());
+    }
+
+    let buf = alloc_buffer_struct();
+    if buf.is_null() {
+        return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"out of memory".as_ptr());
+    }
+
+    let allocator = (*(*stream).device).allocator.hal_allocator;
+    let mut params = ireei::iree_hal_buffer_params_t {
+        usage,
+        access: ireei::IREE_HAL_MEMORY_ACCESS_ALL,
+        _pad0: 0,
+        type_: mem_type,
+        _pad1: 0,
+        queue_affinity: 0,
+        min_alignment: 0,
+    };
+    // query_buffer_compatibility resolves/normalizes params in place.
+    let compatibility = ireei::iree_hal_allocator_query_buffer_compatibility(
+        allocator,
+        params,
+        size as u64,
+        &mut params,
+        core::ptr::null_mut(),
+    );
+    if compatibility & ireei::IREE_HAL_BUFFER_COMPATIBILITY_ALLOCATABLE == 0 {
+        libc::free(buf as *mut c_void);
+        return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"buffer params are not allocatable on this device".as_ptr());
+    }
+
+    let flush_status = hrx_stream_flush(stream);
+    if !hrx_status_is_ok(flush_status) {
+        libc::free(buf as *mut c_void);
+        return flush_status;
+    }
+
+    let mut wait_value = (*stream).timepoint;
+    let mut signal_value = (*stream).timepoint + 1;
+    let mut sem = (*(*stream).semaphore).hal_semaphore;
+    let wait_list = ireei::iree_hal_semaphore_list_t {
+        count: if (*stream).timepoint > 0 { 1 } else { 0 },
+        semaphores: &mut sem,
+        payload_values: &mut wait_value,
+    };
+    let signal_list = ireei::iree_hal_semaphore_list_t {
+        count: 1,
+        semaphores: &mut sem,
+        payload_values: &mut signal_value,
+    };
+
+    let mut status = hrx_iree_exact_pool_create(allocator, params, &mut (*buf).hal_pool);
+    if iree::status_is_ok(status) {
+        status = ireei::iree_hal_device_queue_alloca(
+            (*(*stream).device).hal_device,
+            ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
+            wait_list,
+            signal_list,
+            (*buf).hal_pool,
+            params,
+            size as u64,
+            0, // IREE_HAL_ALLOCA_FLAG_NONE
+            &mut (*buf).hal_buffer,
+        );
+    }
+    if iree::status_is_ok(status) {
+        // The AMDGPU transient allocator resolves committed backing while
+        // recording later command buffer ops; make the queued alloca visible now.
+        status = ireei::iree_hal_semaphore_wait(sem, signal_value, ireei::iree_timeout_t::infinite(), 0);
+    }
+    if !iree::status_is_ok(status) {
+        ireei::iree_hal_buffer_release((*buf).hal_buffer);
+        ireei::iree_hal_pool_release((*buf).hal_pool);
+        libc::free(buf as *mut c_void);
+        return hrx_status_from_iree(status);
+    }
+
+    (*buf).ref_count = AtomicI32::new(1);
+    (*buf).device = (*stream).device;
+    hrx_device_retain((*buf).device);
+    (*buf).mem_type = mem_type;
+    (*buf).size = size;
+    (*buf).mapped_ptr = core::ptr::null_mut();
+    (*stream).timepoint = signal_value;
+
+    *buffer = buf;
+    hrx_ok_status()
 }

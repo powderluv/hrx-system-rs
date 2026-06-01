@@ -13,6 +13,7 @@ mod executable;
 mod fence;
 mod host_allocator;
 mod module;
+mod pool;
 mod queue_ops;
 mod runtime;
 mod semaphore;

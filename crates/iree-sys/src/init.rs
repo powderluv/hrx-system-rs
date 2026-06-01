@@ -36,7 +36,7 @@ pub type iree_hal_buffer_t = c_void;
 pub type iree_hal_physical_memory_t = c_void;
 
 /// `iree_hal_buffer_params_t` (32 B, probed): usage u32 @0, access u16 @4,
-/// type u32 @8, queue_affinity u64 @16.
+/// type u32 @8, queue_affinity u64 @16, min_alignment u64 @24.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct iree_hal_buffer_params_t {
@@ -46,6 +46,7 @@ pub struct iree_hal_buffer_params_t {
     pub type_: u32,
     pub _pad1: u32,
     pub queue_affinity: u64,
+    pub min_alignment: u64,
 }
 
 /// `iree_byte_span_t` = { u8* data; size_t length }.
@@ -323,6 +324,36 @@ extern "C" {
         out_pool: *mut *mut iree_async_proactor_pool_t,
     ) -> iree_status_t;
     pub fn iree_async_proactor_pool_release(pool: *mut iree_async_proactor_pool_t);
+    pub fn iree_async_proactor_pool_get(
+        pool: *mut iree_async_proactor_pool_t,
+        index: iree_host_size_t,
+        out_proactor: *mut *mut iree_async_proactor_t,
+    ) -> iree_status_t;
+
+    // Async notification (used by the hrx exact pool).
+    pub fn iree_async_notification_create(
+        proactor: *mut iree_async_proactor_t,
+        flags: u32, // iree_async_notification_flags_t
+        out_notification: *mut *mut iree_async_notification_t,
+    ) -> iree_status_t;
+    pub fn iree_async_notification_release(notification: *mut iree_async_notification_t);
+    pub fn iree_async_notification_signal(notification: *mut iree_async_notification_t, wake_count: i32);
+
+    // HAL pool + buffer length + queue alloca (hrx_buffer_allocate path).
+    pub fn iree_hal_pool_retain(pool: *mut iree_hal_pool_t);
+    pub fn iree_hal_pool_release(pool: *mut iree_hal_pool_t);
+    pub fn iree_hal_buffer_byte_length(buffer: *mut iree_hal_buffer_t) -> iree_device_size_t;
+    pub fn iree_hal_device_queue_alloca(
+        device: *mut iree_hal_device_t,
+        queue_affinity: u64,
+        wait_semaphore_list: iree_hal_semaphore_list_t,
+        signal_semaphore_list: iree_hal_semaphore_list_t,
+        pool: *mut iree_hal_pool_t,
+        params: iree_hal_buffer_params_t, // BY VALUE (32B)
+        allocation_size: iree_device_size_t,
+        flags: u64, // iree_hal_alloca_flags_t
+        out_buffer: *mut *mut iree_hal_buffer_t,
+    ) -> iree_status_t;
 
     // Frontier tracker. options BY VALUE (8B).
     pub fn iree_async_frontier_tracker_create(

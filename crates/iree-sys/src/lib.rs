@@ -34,6 +34,9 @@ pub type iree_hal_allocator_t = c_void;
 pub type iree_hal_driver_t = c_void;
 pub type iree_hal_device_t = c_void;
 pub type iree_hal_device_group_t = c_void;
+pub type iree_async_proactor_t = c_void;
+pub type iree_async_notification_t = c_void;
+pub type iree_hal_pool_t = c_void;
 
 pub mod fem;
 pub mod init;
@@ -215,3 +218,14 @@ pub fn status_code(status: iree_status_t) -> iree_status_code_t {
 pub fn status_is_ok(status: iree_status_t) -> bool {
     status.is_null()
 }
+
+/// `iree_status_from_code(code)` (inline) — a code-only status with no heap
+/// payload (the code is encoded inline in the pointer; freeing it is a no-op).
+#[inline]
+pub fn iree_status_from_code(code: iree_status_code_t) -> iree_status_t {
+    (code as usize & IREE_STATUS_CODE_MASK) as iree_status_t
+}
+
+/// IREE status codes used by hand-rolled error returns.
+pub const IREE_STATUS_INVALID_ARGUMENT: iree_status_code_t = 3;
+pub const IREE_STATUS_FAILED_PRECONDITION: iree_status_code_t = 9;
