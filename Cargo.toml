@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/hip-function-table",
     "crates/hip-logging",
+    "crates/hip-intercept",
 ]
 
 [workspace.package]
