@@ -145,3 +145,35 @@ pub fn hrx_status_from_iree(iree_status: iree::iree_status_t) -> HrxStatus {
         result
     }
 }
+
+/// Mirror of `hrx_status_to_iree`: convert + CONSUME an hrx status into an IREE
+/// status. OK -> NULL; else allocate an IREE error with the message
+/// (OUT_OF_MEMORY maps to RESOURCE_EXHAUSTED). Frees the hrx status.
+pub fn hrx_status_to_iree(status: HrxStatus) -> iree::iree_status_t {
+    if hrx_status_is_ok(status) {
+        return core::ptr::null_mut(); // iree_ok_status()
+    }
+    unsafe {
+        let mut code = (*status).code;
+        if code == HrxStatusCode::OutOfMemory as i32 {
+            code = 8; // IREE_STATUS_RESOURCE_EXHAUSTED
+        }
+        let msg = if (*status).message.is_null() {
+            c"(no message)".as_ptr()
+        } else {
+            (*status).message as *const c_char
+        };
+        // iree_make_status(code, "%s", msg) == iree_status_allocate_f(code, file, line, "%s", msg)
+        let result = iree::iree_status_allocate_f(
+            code,
+            c"hrx".as_ptr(),
+            0,
+            c"%s".as_ptr(),
+            msg,
+        );
+        // consume the hrx status (free payload).
+        libc::free((*status).message as *mut core::ffi::c_void);
+        libc::free(status as *mut core::ffi::c_void);
+        result
+    }
+}

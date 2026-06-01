@@ -510,4 +510,25 @@ extern "C" {
         signal_semaphore_list: iree_hal_semaphore_list_t,
         flags: u32,
     ) -> iree_status_t;
+    pub fn iree_hal_device_queue_host_call(
+        device: *mut iree_hal_device_t,
+        queue_affinity: u64,
+        wait_semaphore_list: iree_hal_semaphore_list_t,
+        signal_semaphore_list: iree_hal_semaphore_list_t,
+        call: iree_hal_host_call_t,
+        args: *const u64, // const uint64_t args[4]
+        flags: u64,
+    ) -> iree_status_t;
 }
+
+/// `iree_hal_host_call_t` (16B): { fn, user_data }. The fn is
+/// `fn(user_data, args[4], context) -> iree_status_t`.
+pub type iree_hal_host_call_fn_t =
+    Option<unsafe extern "C" fn(*mut c_void, *const u64, *mut c_void) -> iree_status_t>;
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct iree_hal_host_call_t {
+    pub fn_: iree_hal_host_call_fn_t,
+    pub user_data: *mut c_void,
+}
+pub const IREE_HAL_HOST_CALL_FLAG_NONE: u64 = 0;

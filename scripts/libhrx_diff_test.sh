@@ -43,6 +43,7 @@ run_diff init hrx_init_test.c   # cpu init + device + value_list
 run_diff mem    hrx_mem_test.c    # allocator + buffer + transfer
 run_diff stream hrx_stream_test.c # semaphore + stream
 run_diff fence  hrx_fence_test.c  # fence + module/exe error paths
+run_diff queue  hrx_queue_test.c  # direct queue ops
 
 if [ "$fail" = 0 ]; then
   echo "PASS: Rust libhrx output identical to C libhrx (all suites)"

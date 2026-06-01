@@ -159,6 +159,14 @@ extern "C" {
         out_buffer: *mut *mut c_char,
         out_buffer_length: *mut iree_host_size_t,
     ) -> bool;
+    /// Backs `iree_make_status(code, fmt, ...)` (a macro). Variadic printf-style.
+    pub fn iree_status_allocate_f(
+        code: iree_status_code_t,
+        file: *const c_char,
+        line: u32,
+        format: *const c_char,
+        ...
+    ) -> iree_status_t;
 
     // --- vm list ---
     pub fn iree_vm_list_create(
