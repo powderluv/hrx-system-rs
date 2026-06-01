@@ -78,7 +78,9 @@ int main(void) {
     hrx_status_t s = hrx_status_to_string(err, &msg, &len);
     snprintf(d, sizeof d, "msg='%s' len=%zu", msg ? msg : "(null)", len);
     check("status_to_string_err",
-          s == NULL && msg && strcmp(msg, "thing missing") == 0 && len == 12, d);
+          s == NULL && msg && strcmp(msg, "thing missing") == 0 &&
+              len == strlen("thing missing"),
+          d);
     hrx_status_free_message(msg);
 
     msg = NULL; len = 0;
