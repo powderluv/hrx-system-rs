@@ -1,6 +1,11 @@
-// Differential test for the GPU-independent libhrx ABI (status, host_allocator,
-// value_list). Links against EITHER the C libhrx.so OR the Rust libhrx_rs.so;
-// the same binary must produce identical output for both. No GPU required.
+// Differential test for the init-free libhrx ABI (status, host_allocator).
+// Links against EITHER the C libhrx.so OR the Rust libhrx_rs.so; the same
+// binary must produce identical output for both. No GPU and no HRX init needed.
+//
+// NOTE: value_list is intentionally NOT exercised here — hrx_value_list_*
+// requires hrx_cpu_initialize() first (it uses the VM instance set up by init),
+// so it is not init-free. It is covered separately once the init/device modules
+// are ported (see scripts/libhrx_diff_test.sh).
 //
 // Emits machine-checkable lines: `CHECK <name> <PASS|FAIL> <detail>`.
 #include <stdint.h>
@@ -49,16 +54,6 @@ extern hrx_status_t hrx_host_allocator_malloc_aligned(hrx_host_allocator_t a,
                                                       size_t n, size_t align,
                                                       size_t off, void **out);
 extern void hrx_host_allocator_free_aligned(hrx_host_allocator_t a, void *p);
-
-extern hrx_status_t hrx_value_list_create(size_t capacity,
-                                          hrx_value_list_t *list);
-extern void hrx_value_list_retain(hrx_value_list_t list);
-extern void hrx_value_list_release(hrx_value_list_t list);
-extern hrx_status_t hrx_value_list_size(hrx_value_list_t list, size_t *size);
-extern hrx_status_t hrx_value_list_push_i64(hrx_value_list_t list, int64_t v);
-extern hrx_status_t hrx_value_list_get_i64(hrx_value_list_t list, size_t index,
-                                           int64_t *v);
-extern hrx_status_t hrx_value_list_push_null_ref(hrx_value_list_t list);
 
 static int g_fail = 0;
 static void check(const char *name, int pass, const char *detail) {
@@ -135,47 +130,6 @@ int main(void) {
     check("host_malloc_aligned",
           s == NULL && al != NULL && ((size_t)al % 256) == 0, d);
     hrx_host_allocator_free_aligned(a, al);
-  }
-
-  // --- value list ---
-  {
-    hrx_value_list_t list = NULL;
-    hrx_status_t s = hrx_value_list_create(8, &list);
-    check("vlist_create", s == NULL && list != NULL, "");
-
-    int64_t vals[] = {0, 1, -1, 42, 9223372036854775807LL, -9223372036854775807LL};
-    int push_ok = 1;
-    for (size_t i = 0; i < sizeof vals / sizeof *vals; ++i)
-      if (hrx_value_list_push_i64(list, vals[i]) != NULL) push_ok = 0;
-    check("vlist_push_i64", push_ok, "");
-
-    s = hrx_value_list_push_null_ref(list);
-    check("vlist_push_null_ref", s == NULL, "");
-
-    size_t sz = 0;
-    s = hrx_value_list_size(list, &sz);
-    char d[64];
-    snprintf(d, sizeof d, "size=%zu", sz);
-    check("vlist_size", s == NULL && sz == 7, d);  // 6 i64 + 1 null ref
-
-    int get_ok = 1;
-    for (size_t i = 0; i < sizeof vals / sizeof *vals; ++i) {
-      int64_t got = 0;
-      if (hrx_value_list_get_i64(list, i, &got) != NULL || got != vals[i])
-        get_ok = 0;
-    }
-    check("vlist_get_i64_roundtrip", get_ok, "");
-
-    // out-of-range get should error
-    int64_t dummy = 0;
-    hrx_status_t oor = hrx_value_list_get_i64(list, 999, &dummy);
-    check("vlist_get_oob_errors", oor != NULL, "");
-    hrx_status_ignore(oor);
-
-    hrx_value_list_retain(list);
-    hrx_value_list_release(list);  // back to 1
-    hrx_value_list_release(list);  // frees
-    check("vlist_retain_release", 1, "");
   }
 
   printf("SUMMARY %s failures=%d\n", g_fail ? "FAIL" : "PASS", g_fail);
