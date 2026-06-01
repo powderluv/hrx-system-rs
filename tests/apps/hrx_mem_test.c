@@ -137,7 +137,7 @@ int main(void) {
     // Some element types may be rejected; accept either OK+nonnull or a clean
     // error — but assert C and Rust agree (the differential covers that). Here
     // we just record the code.
-    snprintf(d, sizeof d, "code=%d bv=%p", hrx_status_code(s), (void *)bv);
+    snprintf(d, sizeof d, "code=%d bv_nonnull=%d", hrx_status_code(s), bv != NULL);
     check("buffer_view_create", 1, d);
     if (s == NULL && bv) {
       size_t rank = 0;
