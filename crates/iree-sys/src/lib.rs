@@ -35,7 +35,14 @@ pub type iree_hal_driver_t = c_void;
 pub type iree_hal_device_t = c_void;
 pub type iree_hal_device_group_t = c_void;
 
+pub mod fem;
 pub mod init;
+
+/// `iree_allocator_null()` (inline) — a zeroed allocator (no self, no ctl).
+#[inline]
+pub fn allocator_null() -> iree_allocator_t {
+    iree_allocator_t { self_: core::ptr::null_mut(), ctl: core::ptr::null_mut() }
+}
 
 /// `iree_allocator_t` — a {self, ctl-fn} pair (2 words). Layout-stable C ABI.
 #[repr(C)]

@@ -86,6 +86,14 @@ impl iree_string_view_t {
         let bytes = s.to_bytes();
         iree_string_view_t { data: bytes.as_ptr(), size: bytes.len() }
     }
+    /// `iree_make_cstring_view` for a raw NUL-terminated C pointer (or null).
+    pub unsafe fn cstr_raw(p: *const core::ffi::c_char) -> Self {
+        if p.is_null() {
+            iree_string_view_t { data: core::ptr::null(), size: 0 }
+        } else {
+            iree_string_view_t { data: p as *const u8, size: libc::strlen(p) }
+        }
+    }
 }
 
 /// `iree_timeout_t` = { iree_timeout_type_t type (i32); iree_time_t nanos (i64) }.

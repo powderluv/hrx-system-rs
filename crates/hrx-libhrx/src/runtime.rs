@@ -83,6 +83,14 @@ pub extern "C" fn hrx_runtime_version(major: *mut c_int, minor: *mut c_int, patc
     }
 }
 
+/// Snapshot of the shared VM instance pointer + initialized flag, for modules
+/// that read `hrx_get_shared_state()->vm_instance` (e.g. module.rs). Returns
+/// (vm_instance, initialized) under the global lock.
+pub(crate) fn shared_vm_instance() -> (*mut iree::iree_vm_instance_t, bool) {
+    let g = G.lock().unwrap();
+    (g.shared.vm_instance, g.shared.initialized)
+}
+
 /// Mirror of hrx_ensure_shared_state (idempotent; bumps init_count).
 fn ensure_shared_state(g: &mut Globals) -> HrxStatus {
     if g.shared.initialized {

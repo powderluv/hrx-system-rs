@@ -1,0 +1,213 @@
+//! Rust port of libhrx/src/libhrx/executable.c — HAL executable load + export
+//! introspection. The export functions go through the iree_hal_compat shim's
+//! function_* API (executable.c uses the old "export" names).
+#![allow(non_snake_case)]
+
+use core::ffi::{c_char, c_void};
+use core::sync::atomic::{AtomicI32, Ordering};
+
+use crate::common::*;
+use crate::device::{hrx_device_release, hrx_device_retain, HrxDevice};
+use iree_sys as iree;
+use iree_sys::fem;
+use iree_sys::init as ireei;
+
+/// `hrx_executable_s` = { ref_count, hal_executable_cache, hal_executable, device }.
+#[repr(C)]
+pub struct HrxExecutableS {
+    pub ref_count: AtomicI32,
+    pub hal_executable_cache: *mut fem::iree_hal_executable_cache_t,
+    pub hal_executable: *mut fem::iree_hal_executable_t,
+    pub device: HrxDevice,
+}
+pub type HrxExecutable = *mut HrxExecutableS;
+
+/// `hrx_executable_export_info_t` (public): { name, flags, constant_count,
+/// binding_count, parameter_count, workgroup_size[3] } — all u32 (name is ptr).
+#[repr(C)]
+pub struct HrxExecutableExportInfo {
+    pub name: *const c_char,
+    pub flags: u32,
+    pub constant_count: u32,
+    pub binding_count: u32,
+    pub parameter_count: u32,
+    pub workgroup_size: [u32; 3],
+}
+
+unsafe fn wrap(
+    device: HrxDevice,
+    cache: *mut fem::iree_hal_executable_cache_t,
+    exe: *mut fem::iree_hal_executable_t,
+    out: *mut HrxExecutable,
+) -> HrxStatus {
+    let v = libc::calloc(1, core::mem::size_of::<HrxExecutableS>()) as *mut HrxExecutableS;
+    if v.is_null() {
+        fem::iree_hal_executable_release(exe);
+        fem::iree_hal_executable_cache_release(cache);
+        return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"out of memory".as_ptr());
+    }
+    (*v).ref_count = AtomicI32::new(1);
+    (*v).hal_executable_cache = cache;
+    (*v).hal_executable = exe;
+    (*v).device = device;
+    hrx_device_retain(device);
+    *out = v;
+    hrx_ok_status()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_executable_load_data(
+    device: HrxDevice,
+    executable_data: *const c_void,
+    executable_data_size: usize,
+    executable_format: *const c_char,
+    executable: *mut HrxExecutable,
+) -> HrxStatus {
+    if device.is_null() || executable.is_null() || executable_data.is_null() || executable_data_size == 0 {
+        return hrx_make_status(
+            HrxStatusCode::InvalidArgument as i32,
+            c"device, executable_data, or executable is invalid".as_ptr(),
+        );
+    }
+    *executable = core::ptr::null_mut();
+
+    let mut cache: *mut fem::iree_hal_executable_cache_t = core::ptr::null_mut();
+    let s = fem::iree_hal_executable_cache_create(
+        (*device).hal_device,
+        ireei::iree_string_view_t::cstr(c"hrx"),
+        &mut cache,
+    );
+    if !iree::status_is_ok(s) {
+        return hrx_status_from_iree(s);
+    }
+
+    // (Format inference omitted — callers pass a format; if NULL we'd need
+    // iree_hal_executable_cache_infer_format. For now require a format.)
+    if executable_format.is_null() || *executable_format == 0 {
+        fem::iree_hal_executable_cache_release(cache);
+        return hrx_make_status(
+            HrxStatusCode::InvalidArgument as i32,
+            c"executable_format is required".as_ptr(),
+        );
+    }
+
+    let mut params = fem::iree_hal_executable_params_t::zeroed();
+    fem::iree_hal_executable_params_initialize(&mut params);
+    let fmt = ireei::iree_string_view_t::cstr_raw(executable_format);
+    params.set_executable_format(fmt);
+    params.set_executable_data(iree::iree_const_byte_span_t {
+        data: executable_data as *const u8,
+        data_length: executable_data_size,
+    });
+    params.set_caching_mode(0);
+
+    let mut exe: *mut fem::iree_hal_executable_t = core::ptr::null_mut();
+    let s = fem::iree_hal_executable_cache_prepare_executable(cache, &params, &mut exe);
+    if !iree::status_is_ok(s) {
+        fem::iree_hal_executable_cache_release(cache);
+        return hrx_status_from_iree(s);
+    }
+    wrap(device, cache, exe, executable)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_executable_retain(executable: HrxExecutable) {
+    if executable.is_null() {
+        return;
+    }
+    fem::iree_hal_executable_cache_retain((*executable).hal_executable_cache);
+    fem::iree_hal_executable_retain((*executable).hal_executable);
+    hrx_device_retain((*executable).device);
+    (*executable).ref_count.fetch_add(1, Ordering::Relaxed);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_executable_release(executable: HrxExecutable) {
+    if executable.is_null() {
+        return;
+    }
+    let cache = (*executable).hal_executable_cache;
+    let exe = (*executable).hal_executable;
+    let device = (*executable).device;
+    if (*executable).ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
+        libc::free(executable as *mut c_void);
+    }
+    fem::iree_hal_executable_release(exe);
+    fem::iree_hal_executable_cache_release(cache);
+    hrx_device_release(device);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_executable_export_count(
+    executable: HrxExecutable,
+    count: *mut usize,
+) -> HrxStatus {
+    if executable.is_null() || count.is_null() {
+        return hrx_make_status(
+            HrxStatusCode::InvalidArgument as i32,
+            c"executable or count is NULL".as_ptr(),
+        );
+    }
+    *count = fem::iree_hal_executable_function_count((*executable).hal_executable);
+    hrx_ok_status()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_executable_export_info(
+    executable: HrxExecutable,
+    export_ordinal: u32,
+    out_info: *mut HrxExecutableExportInfo,
+) -> HrxStatus {
+    if executable.is_null() || out_info.is_null() {
+        return hrx_make_status(
+            HrxStatusCode::InvalidArgument as i32,
+            c"executable or out_info is NULL".as_ptr(),
+        );
+    }
+    let mut hal = fem::iree_hal_executable_function_info_t::zeroed();
+    // iree_hal_executable_function_from_index(ordinal) — the function handle is
+    // just { value: ordinal as u64 } per the index mapping.
+    let func = fem::iree_hal_executable_function_t { value: export_ordinal as u64 };
+    let s = fem::iree_hal_executable_function_info((*executable).hal_executable, func, &mut hal);
+    if !iree::status_is_ok(s) {
+        return hrx_status_from_iree(s);
+    }
+    (*out_info).name = hal.name.data as *const c_char;
+    (*out_info).flags = hal.flags;
+    (*out_info).constant_count = hal.constant_count as u32;
+    (*out_info).binding_count = hal.binding_count as u32;
+    (*out_info).parameter_count = hal.parameter_count as u32;
+    (*out_info).workgroup_size = hal.workgroup_size;
+    hrx_ok_status()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn hrx_executable_lookup_export_by_name(
+    executable: HrxExecutable,
+    name: *const c_char,
+    export_ordinal: *mut u32,
+) -> HrxStatus {
+    if executable.is_null() || name.is_null() || export_ordinal.is_null() {
+        return hrx_make_status(
+            HrxStatusCode::InvalidArgument as i32,
+            c"executable, name, or export_ordinal is NULL".as_ptr(),
+        );
+    }
+    let mut func = fem::iree_hal_executable_function_t { value: u64::MAX };
+    let s = fem::iree_hal_executable_lookup_function_by_name(
+        (*executable).hal_executable,
+        ireei::iree_string_view_t::cstr_raw(name),
+        &mut func,
+    );
+    if !iree::status_is_ok(s) {
+        return hrx_status_from_iree(s);
+    }
+    if func.value > u32::MAX as u64 {
+        return hrx_make_status(
+            HrxStatusCode::Unimplemented as i32,
+            c"executable function is not a dense ordinal".as_ptr(),
+        );
+    }
+    *export_ordinal = func.value as u32;
+    hrx_ok_status()
+}
