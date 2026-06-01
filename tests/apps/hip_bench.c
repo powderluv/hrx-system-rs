@@ -9,8 +9,12 @@
 // Covers:
 //   - host API latency: hipSetDevice, hipDeviceSynchronize, hipStreamCreate/Destroy
 //   - alloc/free latency: hipMalloc + hipFree at several sizes
-//   - transfer bandwidth: H2D and D2H memcpy across sizes
-//   - memset bandwidth
+//   - transfer bandwidth: H2D and D2H memcpy across sizes (+ trailing sync)
+//   - memset bandwidth (+ trailing sync)
+//
+// Transfer/memset timings include a trailing hipDeviceSynchronize() so both a
+// sync backend (HRX) and an async one (CLR hipMemset) measure time-to-
+// completion — otherwise the comparison is submit-vs-completion and meaningless.
 //
 // Output is machine-parseable: `RESULT <category> <name> <bytes> <median_ns> <p10_ns> <p90_ns> <iters>`
 #include <stdint.h>
@@ -89,14 +93,19 @@ static void w_malloc_free(void *c) {
 }
 
 struct xfer_ctx { void *dev; void *host; size_t n; int kind; };
+// Each timed op is followed by hipDeviceSynchronize() so BOTH backends measure
+// time-to-completion, not just submit. (CLR's hipMemset is async; HRX's is
+// internally synchronous — without this sync the two would not be comparable.)
 static void w_memcpy(void *c) {
   struct xfer_ctx *x = c;
   if (x->kind == H2D) hipMemcpy(x->dev, x->host, x->n, H2D);
   else hipMemcpy(x->host, x->dev, x->n, D2H);
+  hipDeviceSynchronize();
 }
 static void w_memset(void *c) {
   struct xfer_ctx *x = c;
   hipMemset(x->dev, 0x5A, x->n);
+  hipDeviceSynchronize();
 }
 
 // Correctness gate: H2D + D2H roundtrip and memset must be byte-exact, else we
