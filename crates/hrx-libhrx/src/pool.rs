@@ -3,6 +3,26 @@
 //! reservations are backed 1:1 by iree_hal_allocator_allocate_buffer calls of
 //! exactly the requested size (no suballocation). IREE's queue_alloca drives
 //! the vtable below.
+//!
+//! Owned-model exemption: unlike the other hrx objects, `HrxExactPool` is NOT a
+//! public `hrx_*_t` opaque handle — it has no `#[no_mangle]` API and no
+//! `hrx_pool_retain`/`release`; it is an *IREE resource* implementation. Its
+//! refcount is the `iree_hal_resource_t` header's `ref_count` at offset 0 (which
+//! IREE reads/writes directly via `iree_hal_pool_retain`/`release` through the
+//! vtable), it is allocated by `iree_allocator_malloc`, and it is destroyed by
+//! IREE calling `pool_destroy` (the vtable's first slot) when that refcount hits
+//! zero — `pool_destroy` then frees it with `iree_allocator_free`. The Arc-owned
+//! model is therefore unsound here and is deliberately NOT applied (see the safety
+//! plan's "pool" note): `Arc::into_raw` yields a pointer *past* the Arc control
+//! block, so handing it to IREE — which would `iree_allocator_free` that interior
+//! pointer and never run the Arc's own drop/dealloc — corrupts the heap; the
+//! allocators differ (Rust global vs IREE host); and the struct is never
+//! Rust-dropped, so field-level RAII `Drop` would never run. The CONSUMER side is
+//! already safe: `buffer.rs::hrx_buffer_allocate` wraps the returned pool pointer
+//! in the `HalPool` RAII type, so the one ref the caller owns is released by drop.
+//! What remains here is inherently FFI-shaped (a C vtable IREE invokes with raw
+//! pointers); it is hardened with compile-time ABI guards (struct sizes + the
+//! offset-0 resource-header assert at the bottom of this file) and a typed vtable.
 #![allow(non_snake_case)]
 
 use core::ffi::c_void;

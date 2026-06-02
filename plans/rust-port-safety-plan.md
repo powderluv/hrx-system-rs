@@ -554,7 +554,40 @@ geomean 1.002):
   the push/size/get ops borrow via `handle_ref`. `hrx_function_invoke` reaches the
   args/rets lists through a new `value_list_vm` accessor. MI300: 7-suite
   byte-identical, perf gate PASS (geomean 1.005).
-- [ ] Remaining: `Hal` trait / Miri at Phase 4. (See the `pool` note below.)
+- [x] `pool` (`HrxExactPool`) — **deliberately NOT migrated to the owned model;
+  documented exception.** It is not a public `hrx_*_t` handle but an *IREE
+  resource* implementation: an `iree_hal_pool_t` with an `iree_hal_resource_t`
+  header at offset 0, whose `ref_count` IREE reads/writes directly via
+  `iree_hal_pool_retain`/`release`, allocated by `iree_allocator_malloc` and
+  destroyed by IREE invoking the vtable's `pool_destroy` (which `iree_allocator_free`s
+  it) when that refcount reaches zero. An `Arc` migration is unsound:
+  `Arc::into_raw` returns a pointer *past* the control block, so IREE
+  `iree_allocator_free`-ing that interior pointer (and never running the Arc's
+  drop/dealloc) corrupts the heap; the allocators differ (Rust global vs IREE
+  host); and the struct is never Rust-dropped, so field-level RAII would never run.
+  The **consumer** side is already safe — `buffer.rs::hrx_buffer_allocate` wraps the
+  returned pool pointer in `HalPool` (RAII). The pool internals stay FFI-shaped (a
+  C vtable IREE calls with raw pointers), hardened with compile-time ABI guards
+  (struct sizes + the offset-0 resource-header `offset_of!` assert) and a typed
+  vtable. This object is the right place for the FUTURE `Hal` trait + Miri work
+  (Phase 4) to formalize the vtable contract, not the Arc model.
+- [ ] Remaining: `Hal` trait / Miri at Phase 4.
+
+### Alternatives Considered (pool)
+
+- **Full `Arc<HrxExactPool>` migration (rejected).** Unsound for the layout/allocator
+  reasons above: IREE owns the resource refcount and the free path, both of which
+  are incompatible with `Arc`'s control-block-before-data layout and Rust global
+  allocator. It would trade a working FFI object for heap corruption.
+- **Wrap the pool's own HAL fields (`allocator`, `notification`) in iree-hal RAII
+  types (rejected).** The struct is freed by `iree_allocator_free` inside
+  `pool_destroy`, never by Rust `Drop`, so those wrappers' `Drop` would never fire;
+  the manual releases in `pool_destroy` are exactly what's required and removing
+  them in favor of RAII that never runs would leak.
+- **Leave as-is with explicit documentation + the existing compile-time ABI guards
+  (chosen).** Records why the object is exempt, keeps the correct IREE-managed
+  lifecycle, and confines the inherent `unsafe` to the documented vtable boundary —
+  with the consumer-side reference already made safe via `HalPool`.
 
 ## Bottom line
 
