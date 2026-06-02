@@ -548,8 +548,13 @@ geomean 1.002):
   cross-object ownership, and accessor coverage; it noted retain is now net-faster
   (one Arc inc vs C's 4–5 fanout incs). MI300: 7-suite byte-identical, perf gate
   PASS (geomean 0.988).
-- [ ] Remaining: `value_list`/`pool` (still raw-pointer + manual refcount).
-  `Hal` trait / Miri at Phase 4.
+- [x] `value_list` migrated to `Arc<HrxValueListS>` { `HalVmList` } — a single
+  RAII field wrapping the `iree_vm_list_t`; no `ref_count`/`#[repr(C)]`. retain/
+  release are `Arc` ops (NULL-guard-free, matching C); create uses `into_handle`;
+  the push/size/get ops borrow via `handle_ref`. `hrx_function_invoke` reaches the
+  args/rets lists through a new `value_list_vm` accessor. MI300: 7-suite
+  byte-identical, perf gate PASS (geomean 1.005).
+- [ ] Remaining: `Hal` trait / Miri at Phase 4. (See the `pool` note below.)
 
 ## Bottom line
 

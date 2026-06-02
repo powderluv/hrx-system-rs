@@ -17,7 +17,7 @@
 //! `iree_hal_semaphore_t`, `iree_hal_buffer_view_t`, `iree_hal_device_t`,
 //! `iree_hal_device_group_t`, `iree_hal_allocator_t`, `iree_hal_buffer_t`,
 //! `iree_hal_pool_t`, `iree_hal_executable_t`, `iree_hal_executable_cache_t`,
-//! `iree_vm_module_t`, and `iree_vm_context_t`.
+//! `iree_vm_module_t`, `iree_vm_context_t`, and `iree_vm_list_t`.
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use core::ptr::NonNull;
@@ -539,5 +539,32 @@ impl Drop for HalVmContext {
     fn drop(&mut self) {
         // SAFETY: self owns one reference; release it once.
         unsafe { fem::iree_vm_context_release(self.0.as_ptr()) };
+    }
+}
+
+/// Owned reference to an `iree_vm_list_t` (the VM value list behind a
+/// `hrx_value_list_t`). Move-only: `Drop` releases the one reference held for the
+/// list's lifetime.
+#[repr(transparent)]
+pub struct HalVmList(NonNull<iree::iree_vm_list_t>);
+
+impl HalVmList {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_vm_list_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut iree::iree_vm_list_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut iree::iree_vm_list_t {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HalVmList {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release it once.
+        unsafe { iree::iree_vm_list_release(self.0.as_ptr()) };
     }
 }

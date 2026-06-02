@@ -20,7 +20,7 @@ use core::ffi::{c_char, c_void};
 use crate::common::*;
 use crate::device::{DeviceRef, HrxDevice};
 use crate::handle::{handle_ref, handle_release, handle_retain, into_handle};
-use crate::value_list::HrxValueList;
+use crate::value_list::{value_list_vm, HrxValueList};
 use iree_hal::{HalVmContext, HalVmModule};
 use iree_sys as iree;
 use iree_sys::fem;
@@ -240,8 +240,8 @@ pub unsafe extern "C" fn hrx_function_invoke(
         );
     }
     let alloc = iree::allocator_system();
-    let inputs = if args.is_null() { core::ptr::null() } else { (*args).vm_list };
-    let outputs = if rets.is_null() { core::ptr::null_mut() } else { (*rets).vm_list };
+    let inputs = if args.is_null() { core::ptr::null() } else { value_list_vm(args) };
+    let outputs = if rets.is_null() { core::ptr::null_mut() } else { value_list_vm(rets) };
     hrx_status_from_iree(fem::iree_vm_invoke(
         handle_ref(module).context.as_ptr(),
         func.vm_function,
