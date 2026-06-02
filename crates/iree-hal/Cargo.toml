@@ -1,0 +1,12 @@
+[package]
+name = "iree-hal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Safe RAII wrappers over the IREE HAL/runtime objects. Confines the IREE FFI and
+# its retain/release rules to one audited crate so hrx-libhrx can call safe
+# methods. The wrappers are #[repr(transparent)] over a raw pointer — zero
+# overhead vs the direct FFI calls.
+[dependencies]
+iree-sys = { path = "../iree-sys" }

@@ -461,6 +461,25 @@ become unrepresentable. Each is independently shippable and reversible.
 - [ ] `#![deny(unsafe_op_in_unsafe_fn)]` crate-wide — deferred to land with the
   module refactors (Phases 1–2), to avoid churning code about to be rewritten.
 
+**Phase 1 (in progress, 2026-06-01).** Foundation landed and validated on MI300
+(7-suite differential byte-identical incl. the `fence` suite; perf gate PASS,
+geomean 1.002):
+
+- [x] `crates/iree-hal`: the safe-RAII wrapper crate, `#![forbid(unsafe_op_in_unsafe_fn)]`.
+  `HalFence` is a `#[repr(transparent)]` newtype — `Drop` = `iree_hal_fence_release`,
+  `Clone` = retain, constructors return the owned wrapper. Grown one IREE type at
+  a time as modules migrate.
+- [x] `crates/hrx-libhrx/src/handle.rs`: the single audited handle boundary —
+  opaque `hrx_*_t` = `Arc<T>` data pointer; `retain`/`release` are `Arc` refcount
+  ops (same atomics as the old manual refcount); `Drop` runs teardown once.
+- [x] `fence.rs` migrated as the proof: raw `*mut HrxFenceS` + `libc::calloc`/`free`
+  + manual `iree_hal_fence_release` accounting → `Arc`-owned `HrxFenceS { hal: HalFence }`
+  with `Drop`-based release and **no direct IREE FFI in the module**. R1
+  (refcount-timing equivalence) confirmed by the byte-identical `fence` suite.
+- [ ] Remaining leaf modules (`semaphore`, `buffer_view`) + then Phase 2
+  (`buffer`/`stream`/`device`) follow the same validated pattern. `Hal` trait /
+  Miri deferred to when Miri-on-object-model is wired (Phase 4).
+
 ## Bottom line
 
 The honest status stays "successful compatibility and parity port" — not "the

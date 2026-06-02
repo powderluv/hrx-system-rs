@@ -155,7 +155,7 @@ pub unsafe extern "C" fn hrx_value_list_push_fence(
             c"list or fence is NULL".as_ptr(),
         );
     }
-    let mut r = fem::iree_hal_fence_retain_ref((*fence).hal_fence);
+    let mut r = fem::iree_hal_fence_retain_ref(crate::fence::fence_hal_ptr(fence));
     hrx_status_from_iree(iree::iree_vm_list_push_ref_move((*list).vm_list, &mut r))
 }
 

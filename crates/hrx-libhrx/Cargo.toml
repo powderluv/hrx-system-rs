@@ -10,6 +10,7 @@ build = "build.rs"
 # (status, host_allocator, value_list) come first.
 [dependencies]
 iree-sys = { path = "../iree-sys" }
+iree-hal = { path = "../iree-hal" }
 libc = "0.2"
 ctor = "0.2"
 

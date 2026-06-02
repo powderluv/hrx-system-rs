@@ -11,6 +11,7 @@ mod common;
 mod device;
 mod executable;
 mod fence;
+mod handle;
 mod host_allocator;
 mod module;
 mod pool;
