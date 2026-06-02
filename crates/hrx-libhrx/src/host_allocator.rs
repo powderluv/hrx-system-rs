@@ -26,7 +26,14 @@ pub static mut hrx_host_allocator_system_value: HrxHostAllocator = HrxHostAlloca
 // exported symbol is a plain static (the ctor runs before any HRX call).
 static CTL: AtomicPtr<c_void> = AtomicPtr::new(core::ptr::null_mut());
 
-#[ctor::ctor]
+// The `ctor` crate's `.init_array` shim is ABI-incompatible with Miri (which runs
+// constructors before the test and rejects the shim's return-type), and this body
+// calls IREE FFI that Miri can't cross. Under Miri the attribute is dropped: the
+// function still compiles but is never registered/called, so the exported global
+// stays at its null initializer — fine, because Miri tests don't touch the host
+// allocator (the object-model tests use the in-memory mock backend instead).
+#[cfg_attr(not(miri), ctor::ctor)]
+#[cfg_attr(miri, allow(dead_code))]
 fn host_allocator_init() {
     let sys = iree::allocator_system();
     CTL.store(sys.ctl, Ordering::SeqCst);

@@ -46,3 +46,16 @@ jobs:
           path: hrx-system
       - name: ABI layout probe
         run: HRX_SYSTEM_SRC="$GITHUB_WORKSPACE/hrx-system" bash scripts/check_abi_layout.sh
+
+  miri:
+    # Miri verifies the pure-Rust ownership/refcount/drop machinery for UB,
+    # use-after-free, double-free, invalid aliasing, and leaks. Miri never links
+    # or calls the real IREE FFI (the load #[ctor] is dropped under cfg(miri)), so
+    # this needs no GPU and no prebuilt archives — it runs on a stock runner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install pinned nightly + miri
+        run: rustup toolchain install nightly-2026-04-03 --component miri rust-src
+      - name: miri
+        run: bash scripts/miri.sh

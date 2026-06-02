@@ -571,7 +571,23 @@ geomean 1.002):
   (struct sizes + the offset-0 resource-header `offset_of!` assert) and a typed
   vtable. This object is the right place for the FUTURE `Hal` trait + Miri work
   (Phase 4) to formalize the vtable contract, not the Arc model.
-- [ ] Remaining: `Hal` trait / Miri at Phase 4.
+- Phase 4 (full rigor envelope) — in progress:
+  - [x] **Miri foundation.** `cargo +nightly-2026-04-03 miri test` runs over the
+    pure-Rust `Arc` handle boundary (`handle.rs`: into_handle / retain / release /
+    handle_ref / into_inner_handle / cyclic), proving it free of use-after-free,
+    double-free, invalid aliasing, and leaks. Miri never links or calls the real
+    IREE FFI, so the lane is GPU-free and needs no prebuilt archives; the load
+    `#[ctor]` is dropped under `cfg(miri)`. Wired into CI (`checks.yml` `miri` job,
+    `scripts/miri.sh`). The plan's "in-memory fake" is realized as a `mock` IREE
+    backend (a small Rust impl of the IREE objects' refcount/lifecycle — *not* a
+    production rewrite; Miri can only check Rust-side memory discipline, never GPU
+    execution, so a real Rust IREE would add nothing over the mock).
+  - [ ] Object-model under Miri (mock IREE backend → wrapper + owned-object
+    lifecycle tests).
+  - [ ] ASAN/UBSAN CI lanes over the GPU differential (real IREE, MI300 runner).
+  - [ ] GPU-free fuzz targets incl. the stateful alloc/retain/release lifecycle
+    fuzzer (against the mock backend).
+  - [ ] `cargo-geiger` unsafe-count ratchet; best-effort TSAN.
 
 ### Alternatives Considered (pool)
 
