@@ -18,7 +18,7 @@ use core::ffi::c_void;
 use crate::buffer::{buffer_hal, HrxBuffer};
 use crate::common::*;
 use crate::device::{DeviceRef, HrxDevice};
-use crate::executable::HrxExecutable;
+use crate::executable::{executable_hal, HrxExecutable};
 use crate::handle::{handle_ref, handle_release, handle_retain, into_handle};
 use crate::queue_ops::{build_hal_bindings, HrxBufferRef, HrxDispatchConfig};
 use crate::semaphore::{
@@ -576,7 +576,7 @@ pub unsafe extern "C" fn hrx_stream_dispatch(
 
     let s = ireei::iree_hal_command_buffer_dispatch(
         st.pending_cb.get(),
-        (*executable).hal_executable,
+        executable_hal(executable),
         func,
         hal_config,
         hal_constants,

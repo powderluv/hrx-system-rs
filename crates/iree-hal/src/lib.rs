@@ -15,8 +15,9 @@
 //! This crate is grown one object type at a time as each `hrx-libhrx` module is
 //! migrated off raw pointers; today it covers `iree_hal_fence_t`,
 //! `iree_hal_semaphore_t`, `iree_hal_buffer_view_t`, `iree_hal_device_t`,
-//! `iree_hal_device_group_t`, `iree_hal_allocator_t`, `iree_hal_buffer_t`, and
-//! `iree_hal_pool_t`.
+//! `iree_hal_device_group_t`, `iree_hal_allocator_t`, `iree_hal_buffer_t`,
+//! `iree_hal_pool_t`, `iree_hal_executable_t`, `iree_hal_executable_cache_t`,
+//! `iree_vm_module_t`, and `iree_vm_context_t`.
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use core::ptr::NonNull;
@@ -434,5 +435,109 @@ impl Drop for HalPool {
     fn drop(&mut self) {
         // SAFETY: self owns one reference; release it once.
         unsafe { ireei::iree_hal_pool_release(self.0.as_ptr()) };
+    }
+}
+
+/// Owned reference to an `iree_hal_executable_t`. Move-only: the hrx executable
+/// holds one reference for its lifetime and releases it once on drop.
+#[repr(transparent)]
+pub struct HalExecutable(NonNull<fem::iree_hal_executable_t>);
+
+impl HalExecutable {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_hal_executable_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut fem::iree_hal_executable_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut fem::iree_hal_executable_t {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HalExecutable {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release it once.
+        unsafe { fem::iree_hal_executable_release(self.0.as_ptr()) };
+    }
+}
+
+/// Owned reference to an `iree_hal_executable_cache_t`. Move-only.
+#[repr(transparent)]
+pub struct HalExecutableCache(NonNull<fem::iree_hal_executable_cache_t>);
+
+impl HalExecutableCache {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_hal_executable_cache_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut fem::iree_hal_executable_cache_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut fem::iree_hal_executable_cache_t {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HalExecutableCache {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release it once.
+        unsafe { fem::iree_hal_executable_cache_release(self.0.as_ptr()) };
+    }
+}
+
+/// Owned reference to an `iree_vm_module_t` (a bytecode or HAL VM module).
+/// Move-only: `Drop` releases the one reference. The hrx module holds one
+/// reference each to its bytecode and HAL VM modules for its lifetime.
+#[repr(transparent)]
+pub struct HalVmModule(NonNull<fem::iree_vm_module_t>);
+
+impl HalVmModule {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_vm_module_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut fem::iree_vm_module_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut fem::iree_vm_module_t {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HalVmModule {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release it once.
+        unsafe { fem::iree_vm_module_release(self.0.as_ptr()) };
+    }
+}
+
+/// Owned reference to an `iree_vm_context_t`. Move-only: `Drop` releases the one
+/// reference the hrx module holds for its lifetime.
+#[repr(transparent)]
+pub struct HalVmContext(NonNull<fem::iree_vm_context_t>);
+
+impl HalVmContext {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_vm_context_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut fem::iree_vm_context_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut fem::iree_vm_context_t {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HalVmContext {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release it once.
+        unsafe { fem::iree_vm_context_release(self.0.as_ptr()) };
     }
 }

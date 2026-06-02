@@ -7,7 +7,7 @@ use core::ffi::c_void;
 use crate::buffer::{buffer_hal, HrxBuffer};
 use crate::common::*;
 use crate::device::HrxDevice;
-use crate::executable::HrxExecutable;
+use crate::executable::{executable_hal, HrxExecutable};
 use crate::semaphore::HrxSemaphore;
 use iree_sys as iree;
 use iree_sys::fem;
@@ -358,7 +358,7 @@ pub unsafe extern "C" fn hrx_queue_dispatch(
         normalize_affinity(affinity),
         wl,
         sl,
-        (*executable).hal_executable,
+        executable_hal(executable),
         func,
         hal_config,
         hal_constants,

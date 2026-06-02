@@ -1,26 +1,48 @@
 //! Rust port of libhrx/src/libhrx/executable.c — HAL executable load + export
 //! introspection. The export functions go through the iree_hal_compat shim's
 //! function_* API (executable.c uses the old "export" names).
+//!
+//! Phase-2 owned model: the opaque `hrx_executable_t` is the `Arc` data pointer of
+//! an `HrxExecutableS`. retain/release are `Arc` refcount ops, and on the last
+//! release the fields drop in declaration order — `hal_executable` →
+//! `hal_executable_cache` → `device` — reproducing the C release sequence. The HAL
+//! handles are RAII wrappers; there is no explicit `Drop`.
 #![allow(non_snake_case)]
 
 use core::ffi::{c_char, c_void};
-use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::common::*;
-use crate::device::{hrx_device_release, hrx_device_retain, HrxDevice};
+use crate::device::{DeviceRef, HrxDevice};
+use crate::handle::{handle_ref, handle_release, handle_retain, into_handle};
+use iree_hal::{HalExecutable, HalExecutableCache};
 use iree_sys as iree;
 use iree_sys::fem;
 use iree_sys::init as ireei;
 
-/// `hrx_executable_s` = { ref_count, hal_executable_cache, hal_executable, device }.
-#[repr(C)]
+/// `hrx_executable_s` — the object behind the opaque `hrx_executable_t`.
+/// Declaration order is load-bearing for drop: `hal_executable` →
+/// `hal_executable_cache` → `device`, matching the C release order.
 pub struct HrxExecutableS {
-    pub ref_count: AtomicI32,
-    pub hal_executable_cache: *mut fem::iree_hal_executable_cache_t,
-    pub hal_executable: *mut fem::iree_hal_executable_t,
-    pub device: HrxDevice,
+    hal_executable: HalExecutable,
+    /// Held only for its RAII drop (releases the cache after the executable);
+    /// never read directly.
+    #[allow(dead_code)]
+    hal_executable_cache: HalExecutableCache,
+    /// RAII drop-guard holding the device reference for the executable's lifetime;
+    /// never read directly.
+    #[allow(dead_code)]
+    device: DeviceRef,
 }
 pub type HrxExecutable = *mut HrxExecutableS;
+
+/// Borrow the raw IREE executable pointer behind a handle (for dispatch in
+/// queue_ops/stream).
+///
+/// # Safety
+/// `executable` must be a live `hrx_executable_t`.
+pub(crate) unsafe fn executable_hal(executable: HrxExecutable) -> *mut fem::iree_hal_executable_t {
+    handle_ref(executable).hal_executable.as_ptr()
+}
 
 /// `hrx_executable_export_info_t` (public): { name, flags, constant_count,
 /// binding_count, parameter_count, workgroup_size[3] } — all u32 (name is ptr).
@@ -40,18 +62,11 @@ unsafe fn wrap(
     exe: *mut fem::iree_hal_executable_t,
     out: *mut HrxExecutable,
 ) -> HrxStatus {
-    let v = libc::calloc(1, core::mem::size_of::<HrxExecutableS>()) as *mut HrxExecutableS;
-    if v.is_null() {
-        fem::iree_hal_executable_release(exe);
-        fem::iree_hal_executable_cache_release(cache);
-        return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"out of memory".as_ptr());
-    }
-    (*v).ref_count = AtomicI32::new(1);
-    (*v).hal_executable_cache = cache;
-    (*v).hal_executable = exe;
-    (*v).device = device;
-    hrx_device_retain(device);
-    *out = v;
+    let hal_executable = HalExecutable::from_owned(exe).expect("prepared executable is non-null");
+    let hal_executable_cache =
+        HalExecutableCache::from_owned(cache).expect("created cache is non-null");
+    let device = DeviceRef::retain(device);
+    *out = into_handle(HrxExecutableS { hal_executable, hal_executable_cache, device });
     hrx_ok_status()
 }
 
@@ -115,26 +130,20 @@ pub unsafe extern "C" fn hrx_executable_retain(executable: HrxExecutable) {
     if executable.is_null() {
         return;
     }
-    fem::iree_hal_executable_cache_retain((*executable).hal_executable_cache);
-    fem::iree_hal_executable_retain((*executable).hal_executable);
-    hrx_device_retain((*executable).device);
-    (*executable).ref_count.fetch_add(1, Ordering::Relaxed);
+    handle_retain(executable);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_executable_release(executable: HrxExecutable) {
+    // The HAL teardown (release executable/cache/device) moved into the field
+    // drops, which run on the last reference in C order. The C code released the
+    // HAL objects on every call to balance per-retain HAL retains; the owned model
+    // holds one reference each and releases them once on drop — observably
+    // equivalent.
     if executable.is_null() {
         return;
     }
-    let cache = (*executable).hal_executable_cache;
-    let exe = (*executable).hal_executable;
-    let device = (*executable).device;
-    if (*executable).ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
-        libc::free(executable as *mut c_void);
-    }
-    fem::iree_hal_executable_release(exe);
-    fem::iree_hal_executable_cache_release(cache);
-    hrx_device_release(device);
+    handle_release(executable);
 }
 
 #[no_mangle]
@@ -148,7 +157,7 @@ pub unsafe extern "C" fn hrx_executable_export_count(
             c"executable or count is NULL".as_ptr(),
         );
     }
-    *count = fem::iree_hal_executable_function_count((*executable).hal_executable);
+    *count = fem::iree_hal_executable_function_count(handle_ref(executable).hal_executable.as_ptr());
     hrx_ok_status()
 }
 
@@ -168,7 +177,7 @@ pub unsafe extern "C" fn hrx_executable_export_info(
     // iree_hal_executable_function_from_index(ordinal) — the function handle is
     // just { value: ordinal as u64 } per the index mapping.
     let func = fem::iree_hal_executable_function_t { value: export_ordinal as u64 };
-    let s = fem::iree_hal_executable_function_info((*executable).hal_executable, func, &mut hal);
+    let s = fem::iree_hal_executable_function_info(handle_ref(executable).hal_executable.as_ptr(), func, &mut hal);
     if !iree::status_is_ok(s) {
         return hrx_status_from_iree(s);
     }
@@ -195,7 +204,7 @@ pub unsafe extern "C" fn hrx_executable_lookup_export_by_name(
     }
     let mut func = fem::iree_hal_executable_function_t { value: u64::MAX };
     let s = fem::iree_hal_executable_lookup_function_by_name(
-        (*executable).hal_executable,
+        handle_ref(executable).hal_executable.as_ptr(),
         ireei::iree_string_view_t::cstr_raw(name),
         &mut func,
     );

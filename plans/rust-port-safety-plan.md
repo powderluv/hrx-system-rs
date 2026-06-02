@@ -528,8 +528,28 @@ geomean 1.002):
   `iree_hal_buffer_release`). Cross-module readers (queue_ops/stream/buffer_view/
   value_list) reach the HAL buffer through a `buffer_hal` accessor. MI300: 7-suite
   byte-identical, perf gate PASS (geomean 1.005, worst 1.040x).
-- [ ] Remaining: `executable`/`module`/`value_list`/`pool` (still raw-pointer +
-  manual refcount). `Hal` trait / Miri at Phase 4.
+- [x] `executable` migrated to `Arc<HrxExecutableS>` { `HalExecutable`,
+  `HalExecutableCache`, `DeviceRef` }; no `ref_count`/`#[repr(C)]`; field-drop
+  order (`hal_executable`→`hal_executable_cache`→`device`) reproduces the C release
+  order. retain/release keep their C NULL guards. Dispatch readers (queue_ops/
+  stream) reach the HAL executable through an `executable_hal` accessor.
+- [x] `module` + `function` migrated to `Arc<HrxModuleS>` / `Arc<HrxFunctionS>`
+  (one atomic commit — the function→module lockstep must change together). The C
+  two-phase init (`ref_count = 0` then `1` + `destroy_partial`) is replaced by
+  construct-on-success: each fallible IREE create is wrapped into its RAII handle
+  immediately, so an early-return drops exactly what was built so far in the C
+  order, and the `Arc` is built only after the last create succeeds (no half-built
+  count-1 object). `HrxModuleS` { `HalVmContext`, `HalVmModule`×2, `DeviceRef` }
+  drops `context`→`hal_module`→`bytecode_module`→`device` (C order). A function
+  holds one module reference via a `ModuleRef` guard for its lifetime; the resolved
+  `vm_function` is a plain 16-byte Copy value (no IREE retain/release symbol
+  exists) kept inline. module/function retain/release are NULL-guard-free (match
+  C). An adversarial design review confirmed drop-order, refcount equivalence,
+  cross-object ownership, and accessor coverage; it noted retain is now net-faster
+  (one Arc inc vs C's 4–5 fanout incs). MI300: 7-suite byte-identical, perf gate
+  PASS (geomean 0.988).
+- [ ] Remaining: `value_list`/`pool` (still raw-pointer + manual refcount).
+  `Hal` trait / Miri at Phase 4.
 
 ## Bottom line
 
