@@ -1,0 +1,29 @@
+# Self-hosted MI300 (gfx942) gates. Manual / on-demand: these need the prebuilt
+# IREE archives ($HRX_BUILD_DIR), the TheRock venv ($THEROCK_VENV), the C
+# libhrx.so.0, and a real GPU. Configure a runner labelled [self-hosted, mi300]
+# with those env vars exported (HRX_BUILD_DIR, THEROCK_VENV, HRX_SYSTEM_SRC).
+name: gpu
+on:
+  workflow_dispatch:
+
+jobs:
+  libhrx-gpu:
+    runs-on: [self-hosted, mi300]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: symbol parity (rust libhrx_rs.so vs C libhrx.so.0)
+        run: bash scripts/check_symbol_parity.sh
+
+      - name: ABI layout (Rust compile-time asserts + C header probe)
+        run: |
+          cargo build --release -p iree-sys   # fires crates/iree-sys/src/abi_layout.rs asserts
+          bash scripts/check_abi_layout.sh
+
+      - name: functional differential (7 suites, byte-identical vs C)
+        run: HRX_RUN_GPU=1 bash scripts/libhrx_diff_test.sh
+
+      - name: performance parity (rust / c-hrx)
+        run: bash scripts/bench_libhrx_parity.sh
+
+      # TODO(phase 4): libhrx CTS (--hrx-library libhrx_rs.so), ASAN/UBSAN lanes.

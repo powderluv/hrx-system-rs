@@ -1,0 +1,6 @@
+# Default toolchain for the standard build/test/clippy/symbol/ABI gates.
+# The sanitizer / Miri / fuzz lanes (Phase 4) invoke a pinned nightly explicitly
+# with `cargo +nightly-2026-04-03 ...` (those need -Z flags).
+[toolchain]
+channel = "stable"
+components = ["clippy", "rustfmt"]

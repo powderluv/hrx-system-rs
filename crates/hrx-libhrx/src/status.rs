@@ -5,13 +5,17 @@ use core::ffi::{c_char, c_void};
 
 use crate::common::*;
 
+/// # Safety
+/// `message`, if non-null, must be a valid NUL-terminated C string.
 #[no_mangle]
-pub extern "C" fn hrx_make_status(code: i32, message: *const c_char) -> HrxStatus {
+pub unsafe extern "C" fn hrx_make_status(code: i32, message: *const c_char) -> HrxStatus {
     crate::common::hrx_make_status(code, message)
 }
 
+/// # Safety
+/// `status`, if non-null, must be a valid `hrx_status_t` from this library.
 #[no_mangle]
-pub extern "C" fn hrx_status_code(status: HrxStatus) -> i32 {
+pub unsafe extern "C" fn hrx_status_code(status: HrxStatus) -> i32 {
     if hrx_status_is_ok(status) {
         return HRX_STATUS_OK;
     }

@@ -435,6 +435,28 @@ become unrepresentable. Each is independently shippable and reversible.
 - **R5 (`pool.rs` stays `repr(C)`):** the exact pool is ABI-bound to IREE's
   vtable; it gets a safe wrapper but keeps its layout. Accepted, documented.
 
+## Progress
+
+**Phase 0 (in progress, 2026-06-01).** Landed and validated on MI300 (gfx942) —
+7-suite differential byte-identical, symbol parity 115/115, ABI layout matches:
+
+- [x] Soundness: the unsound safe `extern "C"` exports that deref caller
+  pointers are now `unsafe` — `hrx_status_code`, `hrx_make_status`, the 8
+  `hrx_host_allocator_*`, and `hrx_runtime_version` (the only remaining safe
+  exports are the 4 pointer-free cpu/gpu init/shutdown fns). ABI unchanged.
+  *(Deviation from A3: kept the `rlib` — marking the fns `unsafe` already makes
+  it sound, and the `rlib` is needed for the later Miri/unit-test work.)*
+- [x] ABI gates: compile-time `#[repr(C)]` layout asserts
+  (`crates/iree-sys/src/abi_layout.rs` + pool structs in `pool.rs`),
+  `scripts/check_abi_layout.sh` (re-probes IREE headers),
+  `scripts/check_symbol_parity.sh` (rust vs C `hrx_*` set).
+- [x] `rust-toolchain.toml` pin; CI skeleton (`.github/workflows/checks.yml`
+  stock lanes, `gpu.yml` self-hosted MI300 lane). Note: `build.rs` requires the
+  prebuilt archives, so iree-sys/hrx-libhrx build+gates are self-hosted.
+- [ ] Perf-gate threshold in `bench_libhrx_parity.sh` (B4) — next.
+- [ ] `#![deny(unsafe_op_in_unsafe_fn)]` crate-wide — deferred to land with the
+  module refactors (Phases 1–2), to avoid churning code about to be rewritten.
+
 ## Bottom line
 
 The honest status stays "successful compatibility and parity port" — not "the

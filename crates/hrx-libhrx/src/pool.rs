@@ -256,3 +256,14 @@ pub(crate) unsafe fn hrx_iree_exact_pool_create(
     *out_pool = pool as *mut iree::iree_hal_pool_t;
     core::ptr::null_mut()
 }
+
+// Compile-time ABI guards for the IREE pool/resource structs IREE dereferences.
+const _: () = {
+    assert!(core::mem::size_of::<IreeHalResource>() == 16);
+    assert!(core::mem::size_of::<IreeHalPoolReservation>() == 32);
+    assert!(core::mem::size_of::<IreeHalPoolAcquireInfo>() == 16);
+    assert!(core::mem::size_of::<IreeHalPoolCapabilities>() == 24);
+    assert!(core::mem::size_of::<IreeHalPoolVtable>() == 64);
+    // The IREE resource header (vtable dispatch) must be at offset 0 of the pool.
+    assert!(core::mem::offset_of!(HrxExactPool, resource) == 0);
+};

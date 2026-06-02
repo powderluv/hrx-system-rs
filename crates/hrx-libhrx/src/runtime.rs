@@ -85,8 +85,14 @@ static G: Mutex<Globals> = Mutex::new(Globals {
     },
 });
 
+/// # Safety
+/// `major`/`minor`/`patch`, where non-null, must be valid, aligned `*mut c_int`.
 #[no_mangle]
-pub extern "C" fn hrx_runtime_version(major: *mut c_int, minor: *mut c_int, patch: *mut c_int) {
+pub unsafe extern "C" fn hrx_runtime_version(
+    major: *mut c_int,
+    minor: *mut c_int,
+    patch: *mut c_int,
+) {
     unsafe {
         if !major.is_null() {
             *major = HRX_VERSION_MAJOR;

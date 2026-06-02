@@ -38,8 +38,12 @@ fn host_allocator_init() {
     }
 }
 
+/// # Safety
+/// Pointer arguments (`out_ptr`/`inout_ptr`/`src`/`ptr`), where present, must be
+/// valid for the documented access and sizes; `allocator` must be a real
+/// `hrx_host_allocator_t`.
 #[no_mangle]
-pub extern "C" fn hrx_host_allocator_malloc(
+pub unsafe extern "C" fn hrx_host_allocator_malloc(
     allocator: HrxHostAllocator,
     byte_length: usize,
     out_ptr: *mut *mut c_void,
@@ -49,8 +53,12 @@ pub extern "C" fn hrx_host_allocator_malloc(
     })
 }
 
+/// # Safety
+/// Pointer arguments (`out_ptr`/`inout_ptr`/`src`/`ptr`), where present, must be
+/// valid for the documented access and sizes; `allocator` must be a real
+/// `hrx_host_allocator_t`.
 #[no_mangle]
-pub extern "C" fn hrx_host_allocator_malloc_uninitialized(
+pub unsafe extern "C" fn hrx_host_allocator_malloc_uninitialized(
     allocator: HrxHostAllocator,
     byte_length: usize,
     out_ptr: *mut *mut c_void,
@@ -60,8 +68,12 @@ pub extern "C" fn hrx_host_allocator_malloc_uninitialized(
     })
 }
 
+/// # Safety
+/// Pointer arguments (`out_ptr`/`inout_ptr`/`src`/`ptr`), where present, must be
+/// valid for the documented access and sizes; `allocator` must be a real
+/// `hrx_host_allocator_t`.
 #[no_mangle]
-pub extern "C" fn hrx_host_allocator_realloc(
+pub unsafe extern "C" fn hrx_host_allocator_realloc(
     allocator: HrxHostAllocator,
     byte_length: usize,
     inout_ptr: *mut *mut c_void,
@@ -71,8 +83,12 @@ pub extern "C" fn hrx_host_allocator_realloc(
     })
 }
 
+/// # Safety
+/// Pointer arguments (`out_ptr`/`inout_ptr`/`src`/`ptr`), where present, must be
+/// valid for the documented access and sizes; `allocator` must be a real
+/// `hrx_host_allocator_t`.
 #[no_mangle]
-pub extern "C" fn hrx_host_allocator_clone(
+pub unsafe extern "C" fn hrx_host_allocator_clone(
     allocator: HrxHostAllocator,
     src: *const c_void,
     byte_length: usize,
@@ -87,13 +103,21 @@ pub extern "C" fn hrx_host_allocator_clone(
     })
 }
 
+/// # Safety
+/// Pointer arguments (`out_ptr`/`inout_ptr`/`src`/`ptr`), where present, must be
+/// valid for the documented access and sizes; `allocator` must be a real
+/// `hrx_host_allocator_t`.
 #[no_mangle]
-pub extern "C" fn hrx_host_allocator_free(allocator: HrxHostAllocator, ptr: *mut c_void) {
+pub unsafe extern "C" fn hrx_host_allocator_free(allocator: HrxHostAllocator, ptr: *mut c_void) {
     unsafe { iree::iree_allocator_free(allocator.to_iree(), ptr) }
 }
 
+/// # Safety
+/// Pointer arguments (`out_ptr`/`inout_ptr`/`src`/`ptr`), where present, must be
+/// valid for the documented access and sizes; `allocator` must be a real
+/// `hrx_host_allocator_t`.
 #[no_mangle]
-pub extern "C" fn hrx_host_allocator_malloc_aligned(
+pub unsafe extern "C" fn hrx_host_allocator_malloc_aligned(
     allocator: HrxHostAllocator,
     byte_length: usize,
     min_alignment: usize,
@@ -107,8 +131,12 @@ pub extern "C" fn hrx_host_allocator_malloc_aligned(
     })
 }
 
+/// # Safety
+/// Pointer arguments (`out_ptr`/`inout_ptr`/`src`/`ptr`), where present, must be
+/// valid for the documented access and sizes; `allocator` must be a real
+/// `hrx_host_allocator_t`.
 #[no_mangle]
-pub extern "C" fn hrx_host_allocator_realloc_aligned(
+pub unsafe extern "C" fn hrx_host_allocator_realloc_aligned(
     allocator: HrxHostAllocator,
     byte_length: usize,
     min_alignment: usize,
@@ -122,7 +150,11 @@ pub extern "C" fn hrx_host_allocator_realloc_aligned(
     })
 }
 
+/// # Safety
+/// Pointer arguments (`out_ptr`/`inout_ptr`/`src`/`ptr`), where present, must be
+/// valid for the documented access and sizes; `allocator` must be a real
+/// `hrx_host_allocator_t`.
 #[no_mangle]
-pub extern "C" fn hrx_host_allocator_free_aligned(allocator: HrxHostAllocator, ptr: *mut c_void) {
+pub unsafe extern "C" fn hrx_host_allocator_free_aligned(allocator: HrxHostAllocator, ptr: *mut c_void) {
     unsafe { iree::iree_allocator_free_aligned(allocator.to_iree(), ptr) }
 }

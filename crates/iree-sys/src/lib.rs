@@ -40,6 +40,7 @@ pub type iree_hal_pool_t = c_void;
 
 pub mod fem;
 pub mod init;
+mod abi_layout;
 
 /// `iree_allocator_null()` (inline) — a zeroed allocator (no self, no ctl).
 #[inline]

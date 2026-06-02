@@ -1,0 +1,48 @@
+# Stock-runner gates (no GPU, no prebuilt IREE archives needed).
+# The IREE-linked crates (iree-sys, hrx-libhrx) require the prebuilt archives
+# from an hrx-system CMake build, so their build/clippy/differential/perf gates
+# run on the self-hosted MI300 runner — see gpu.yml.
+name: checks
+on:
+  push:
+  pull_request:
+
+jobs:
+  passthrough-lint:
+    # The LD_PRELOAD passthrough crates are self-contained (libc/dl only) — no
+    # IREE, no ROCm — so they lint and test on a stock runner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: clippy clean crates (gate)
+        # These are warning-clean today; keep them clean.
+        run: |
+          for c in hip-function-table hip-noop; do
+            cargo clippy -p "$c" --all-targets -- -D warnings
+          done
+      - name: clippy remaining crates (advisory)
+        # hip-intercept/-logging/-buffer-tracer still carry warnings (mostly the
+        # generated passthrough table). Advisory until cleaned, then ratchet into
+        # the gate step above (plan Phase 0/C5).
+        continue-on-error: true
+        run: |
+          for c in hip-intercept hip-logging hip-buffer-tracer; do
+            cargo clippy -p "$c" --all-targets
+          done
+      - name: test (passthrough crates)
+        run: cargo test -p hip-function-table
+
+  abi-layout:
+    # Re-probe the IREE header layouts our #[repr(C)] models depend on. Needs
+    # only the headers (no IREE build), so it runs on a stock runner after
+    # checking out the C source.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: checkout hrx-system (headers only)
+        uses: actions/checkout@v4
+        with:
+          repository: ROCm/hrx-system
+          path: hrx-system
+      - name: ABI layout probe
+        run: HRX_SYSTEM_SRC="$GITHUB_WORKSPACE/hrx-system" bash scripts/check_abi_layout.sh
