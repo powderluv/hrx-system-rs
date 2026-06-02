@@ -1,0 +1,10 @@
+# Unsafe-block ratchet baselines (plan C5). One "crate count" per line; count is
+# the number of `unsafe {` operation blocks in crates/<crate>/src/ (the actual
+# unsafe operations, not the unavoidable `pub unsafe extern "C" fn` ABI decls).
+# The ratchet FAILS if a count rises above its baseline; a DROP is advisory — lower
+# the baseline in the same commit to lock the win. When unsafe legitimately grows
+# (incl. new Miri/test unsafe), bump the baseline here with justification in the
+# commit so the increase is visible in review.
+hrx-libhrx 45
+iree-hal 38
+iree-sys 14

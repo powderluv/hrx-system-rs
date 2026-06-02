@@ -59,3 +59,13 @@ jobs:
         run: rustup toolchain install nightly-2026-04-03 --component miri rust-src
       - name: miri
         run: bash scripts/miri.sh
+
+  unsafe-ratchet:
+    # Fail if the count of `unsafe {` operation blocks in the safety-relevant
+    # crates rises above its baseline — prevents unsafe creep as the port evolves.
+    # Pure source scan, no build needed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: unsafe-block ratchet
+        run: bash scripts/unsafe_ratchet.sh

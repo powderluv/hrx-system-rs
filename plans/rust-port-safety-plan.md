@@ -592,11 +592,17 @@ geomean 1.002):
     the change is inert under non-Miri (externs unchanged). This is the plan's
     "in-memory fake," and the bounded answer to "rewrite IREE in Rust": a tiny Rust
     stand-in for the object lifecycle, not a production runtime.
-  - [ ] Extend the mock to the owned-object lifecycles (create chains) as needed.
-  - [ ] ASAN/UBSAN CI lanes over the GPU differential (real IREE, MI300 runner).
-  - [ ] GPU-free fuzz targets incl. the stateful alloc/retain/release lifecycle
-    fuzzer (against the mock backend).
-  - [ ] `cargo-geiger` unsafe-count ratchet; best-effort TSAN.
+  - [x] **Unsafe-block ratchet** (`scripts/unsafe_ratchet.sh` + baseline +
+    `checks.yml` `unsafe-ratchet` job). Gates the count of `unsafe {` operation
+    blocks per safety-relevant crate (hrx-libhrx 45 / iree-hal 38 / iree-sys 14)
+    against a baseline; an increase fails CI, a decrease is advisory. Chosen over
+    `cargo-geiger` (slow to compile, fragile in CI) — same creep-prevention,
+    dependency-free, instant. Counts the meaningful unsafe *operations*, not the
+    fixed `pub unsafe extern "C" fn` ABI surface.
+  - [ ] **Remaining:** ASAN/UBSAN CI lanes over the GPU differential (real IREE,
+    MI300 runner); GPU-free fuzz targets incl. the stateful alloc/retain/release
+    lifecycle fuzzer (against the mock backend); best-effort TSAN; optionally extend
+    the Miri mock to the owned-object create chains.
 
 ### Alternatives Considered (pool)
 
