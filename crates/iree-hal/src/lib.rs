@@ -15,7 +15,8 @@
 //! This crate is grown one object type at a time as each `hrx-libhrx` module is
 //! migrated off raw pointers; today it covers `iree_hal_fence_t`,
 //! `iree_hal_semaphore_t`, `iree_hal_buffer_view_t`, `iree_hal_device_t`,
-//! `iree_hal_device_group_t`, and `iree_hal_allocator_t`.
+//! `iree_hal_device_group_t`, `iree_hal_allocator_t`, `iree_hal_buffer_t`, and
+//! `iree_hal_pool_t`.
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use core::ptr::NonNull;
@@ -365,5 +366,73 @@ impl Drop for HalAllocator {
     fn drop(&mut self) {
         // SAFETY: self owns one reference; release it once.
         unsafe { ireei::iree_hal_allocator_release(self.0.as_ptr()) };
+    }
+}
+
+/// Owned reference to an `iree_hal_buffer_t`. Move-only: the hrx buffer object
+/// holds one reference for its lifetime and releases it once on drop (the
+/// per-retain HAL buffer accounting moved to the `Arc` refcount). `into_raw` hands
+/// the pointer back *without* releasing — used by the virtual-memory release path,
+/// which consumes the buffer via `iree_hal_allocator_virtual_memory_release`
+/// instead of `iree_hal_buffer_release`.
+#[repr(transparent)]
+pub struct HalBuffer(NonNull<ireei::iree_hal_buffer_t>);
+
+impl HalBuffer {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_hal_buffer_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut ireei::iree_hal_buffer_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut ireei::iree_hal_buffer_t {
+        self.0.as_ptr()
+    }
+    /// Consume the wrapper and return the raw pointer *without* releasing the
+    /// reference; the caller takes ownership of the +1.
+    #[inline]
+    pub fn into_raw(self) -> *mut ireei::iree_hal_buffer_t {
+        let p = self.0.as_ptr();
+        core::mem::forget(self);
+        p
+    }
+}
+
+impl Drop for HalBuffer {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release it once.
+        unsafe { ireei::iree_hal_buffer_release(self.0.as_ptr()) };
+    }
+}
+
+/// Owned reference to an `iree_hal_pool_t` (the per-allocation transient pool on
+/// the stream-alloca path). Move-only: `Drop` releases the one reference. Buffers
+/// not allocated through a pool simply hold `None`, which matches the C code's
+/// NULL-safe `iree_hal_pool_release(NULL)` (a no-op) on those paths.
+#[repr(transparent)]
+pub struct HalPool(NonNull<iree::iree_hal_pool_t>);
+
+impl HalPool {
+    /// Wrap a pool pointer, returning `None` for null (the off-pool paths).
+    ///
+    /// # Safety
+    /// `ptr`, if non-null, must be a valid owned `iree_hal_pool_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut iree::iree_hal_pool_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut iree::iree_hal_pool_t {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HalPool {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release it once.
+        unsafe { ireei::iree_hal_pool_release(self.0.as_ptr()) };
     }
 }

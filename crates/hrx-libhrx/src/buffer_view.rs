@@ -7,7 +7,7 @@
 //! buffer alive, matching the C code (which does not retain the hrx buffer).
 #![allow(non_snake_case)]
 
-use crate::buffer::HrxBuffer;
+use crate::buffer::{buffer_hal, HrxBuffer};
 use crate::common::*;
 use crate::handle::{handle_ref, handle_release, handle_retain, into_handle};
 use iree_hal::{buffer_view_create, HalBufferView};
@@ -83,7 +83,7 @@ pub unsafe extern "C" fn hrx_buffer_view_create(
     };
 
     match buffer_view_create(
-        (*buffer).hal_buffer,
+        buffer_hal(buffer),
         shape_rank,
         iree_shape,
         element_type,

@@ -4,7 +4,7 @@
 
 use core::ffi::c_void;
 
-use crate::buffer::HrxBuffer;
+use crate::buffer::{buffer_hal, HrxBuffer};
 use crate::common::*;
 use crate::device::HrxDevice;
 use crate::executable::HrxExecutable;
@@ -110,7 +110,7 @@ pub unsafe extern "C" fn hrx_queue_fill(
         ireei::iree_hal_command_buffer_release(cb);
         return hrx_status_from_iree(s);
     }
-    let target_ref = ireei::iree_hal_buffer_ref_t::make((*buffer).hal_buffer, offset as u64, size as u64);
+    let target_ref = ireei::iree_hal_buffer_ref_t::make(buffer_hal(buffer), offset as u64, size as u64);
     let s = ireei::iree_hal_command_buffer_fill_buffer(cb, target_ref, pattern, pattern_size, 0);
     if !iree::status_is_ok(s) {
         ireei::iree_hal_command_buffer_release(cb);
@@ -169,8 +169,8 @@ pub unsafe extern "C" fn hrx_queue_copy(
         ireei::iree_hal_command_buffer_release(cb);
         return hrx_status_from_iree(s);
     }
-    let src_ref = ireei::iree_hal_buffer_ref_t::make((*src).hal_buffer, src_offset as u64, size as u64);
-    let dst_ref = ireei::iree_hal_buffer_ref_t::make((*dst).hal_buffer, dst_offset as u64, size as u64);
+    let src_ref = ireei::iree_hal_buffer_ref_t::make(buffer_hal(src), src_offset as u64, size as u64);
+    let dst_ref = ireei::iree_hal_buffer_ref_t::make(buffer_hal(dst), dst_offset as u64, size as u64);
     let s = ireei::iree_hal_command_buffer_copy_buffer(cb, src_ref, dst_ref, 0);
     if !iree::status_is_ok(s) {
         ireei::iree_hal_command_buffer_release(cb);
@@ -307,7 +307,7 @@ pub(crate) unsafe fn build_hal_bindings(
         if b.buffer.is_null() {
             return Err(());
         }
-        v.push(ireei::iree_hal_buffer_ref_t::make((*b.buffer).hal_buffer, b.offset as u64, b.length as u64));
+        v.push(ireei::iree_hal_buffer_ref_t::make(buffer_hal(b.buffer), b.offset as u64, b.length as u64));
     }
     let list = ireei::iree_hal_buffer_ref_list_t { count: binding_count, values: v.as_ptr() };
     Ok((v, list))

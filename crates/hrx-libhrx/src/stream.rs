@@ -15,7 +15,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
-use crate::buffer::HrxBuffer;
+use crate::buffer::{buffer_hal, HrxBuffer};
 use crate::common::*;
 use crate::device::{DeviceRef, HrxDevice};
 use crate::executable::HrxExecutable;
@@ -419,7 +419,7 @@ pub unsafe extern "C" fn hrx_stream_fill_buffer(
         return s;
     }
     let target_ref =
-        ireei::iree_hal_buffer_ref_t::make((*buffer).hal_buffer, offset as u64, size as u64);
+        ireei::iree_hal_buffer_ref_t::make(buffer_hal(buffer), offset as u64, size as u64);
     let s = ireei::iree_hal_command_buffer_fill_buffer(
         st.pending_cb.get(),
         target_ref,
@@ -459,9 +459,9 @@ pub unsafe extern "C" fn hrx_stream_copy_buffer(
         return s;
     }
     let source_ref =
-        ireei::iree_hal_buffer_ref_t::make((*src).hal_buffer, src_offset as u64, size as u64);
+        ireei::iree_hal_buffer_ref_t::make(buffer_hal(src), src_offset as u64, size as u64);
     let target_ref =
-        ireei::iree_hal_buffer_ref_t::make((*dst).hal_buffer, dst_offset as u64, size as u64);
+        ireei::iree_hal_buffer_ref_t::make(buffer_hal(dst), dst_offset as u64, size as u64);
     let s = ireei::iree_hal_command_buffer_copy_buffer(st.pending_cb.get(), source_ref, target_ref, 0);
     if !iree::status_is_ok(s) {
         return hrx_status_from_iree(s);
@@ -494,7 +494,7 @@ pub unsafe extern "C" fn hrx_stream_update_buffer(
         return s;
     }
     let target_ref =
-        ireei::iree_hal_buffer_ref_t::make((*dst).hal_buffer, dst_offset as u64, host_data_size as u64);
+        ireei::iree_hal_buffer_ref_t::make(buffer_hal(dst), dst_offset as u64, host_data_size as u64);
     let s = ireei::iree_hal_command_buffer_update_buffer(st.pending_cb.get(), host_data, 0, target_ref, 0);
     if !iree::status_is_ok(s) {
         return hrx_status_from_iree(s);

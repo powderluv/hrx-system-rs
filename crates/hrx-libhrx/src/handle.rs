@@ -63,3 +63,22 @@ pub(crate) unsafe fn handle_ref<'a, T>(h: *const T) -> &'a T {
     // SAFETY: caller guarantees `h` points at a live `T`.
     unsafe { &*h }
 }
+
+/// Reclaim the caller's owning reference and move the inner object out of its
+/// `Arc`, returning `Some(T)` when this was the last reference. Returns `None`
+/// (and drops the reclaimed reference) if other references are still outstanding.
+///
+/// Used by destructive single-owner teardown that must take the object apart by
+/// field — e.g. the virtual-memory release, which hands the HAL buffer to a
+/// different release function than the normal `Drop` would call.
+///
+/// # Safety
+/// `h` must be a non-null live handle previously returned by [`into_handle`], and
+/// the caller is transferring its owning reference (the handle must not be used
+/// again).
+#[inline]
+pub(crate) unsafe fn into_inner_handle<T>(h: *const T) -> Option<T> {
+    // SAFETY: caller transfers one owning reference; reconstruct the Arc from it.
+    let arc = unsafe { Arc::from_raw(h) };
+    Arc::into_inner(arc)
+}

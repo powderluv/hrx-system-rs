@@ -514,9 +514,22 @@ geomean 1.002):
   (`stream_device/semaphore/timepoint/set_timepoint`). The pre-existing
   device-leak-on-semaphore-create-failure is fixed (unobservable). MI300: 7-suite
   byte-identical, perf gate PASS (geomean 1.015).
-- [ ] Remaining: `buffer` (map-state enum with `Drop`-unmap + the vmem
-  destructive-release handled via `Arc::into_inner`/destructure), then
-  `executable`/`module`/`value_list`/`pool`. `Hal` trait / Miri at Phase 4.
+- [x] `buffer` migrated to `Arc<HrxBufferS>`. Mutable map state lives in a
+  `RefCell<Option<MappedRange>>` (single-threaded, non-atomic, like the C plain
+  fields); `MappedRange::Drop` unmaps if the buffer is dropped while still mapped
+  (matching C's `iree_status_ignore` release-path unmap), while explicit
+  `hrx_buffer_unmap` takes the value out and `forget`s it so it can return the
+  status without a double-unmap. No explicit `HrxBufferS::Drop` — field-drop order
+  (`map`→`hal_buffer`→`hal_pool`→`device`) reproduces the C release sequence; HAL
+  handles are RAII (`HalBuffer`, `Option<HalPool>`). The destructive virtual-memory
+  release uses `into_inner_handle` (Arc::into_inner) to take the object apart by
+  field and hands the HAL buffer to `iree_hal_allocator_virtual_memory_release` via
+  `HalBuffer::into_raw` (forgetting the wrapper so its `Drop` doesn't also
+  `iree_hal_buffer_release`). Cross-module readers (queue_ops/stream/buffer_view/
+  value_list) reach the HAL buffer through a `buffer_hal` accessor. MI300: 7-suite
+  byte-identical, perf gate PASS (geomean 1.005, worst 1.040x).
+- [ ] Remaining: `executable`/`module`/`value_list`/`pool` (still raw-pointer +
+  manual refcount). `Hal` trait / Miri at Phase 4.
 
 ## Bottom line
 

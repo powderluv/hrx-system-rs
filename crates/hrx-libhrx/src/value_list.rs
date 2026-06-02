@@ -5,7 +5,7 @@
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use crate::buffer::HrxBuffer;
+use crate::buffer::{buffer_hal, HrxBuffer};
 use crate::buffer_view::HrxBufferView;
 use crate::common::*;
 use crate::fence::HrxFence;
@@ -125,7 +125,7 @@ pub unsafe extern "C" fn hrx_value_list_push_buffer(
             c"list or buffer is NULL".as_ptr(),
         );
     }
-    let mut r = fem::iree_hal_buffer_retain_ref((*buffer).hal_buffer);
+    let mut r = fem::iree_hal_buffer_retain_ref(buffer_hal(buffer));
     hrx_status_from_iree(iree::iree_vm_list_push_ref_move((*list).vm_list, &mut r))
 }
 

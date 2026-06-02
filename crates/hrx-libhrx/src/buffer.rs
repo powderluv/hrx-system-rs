@@ -2,15 +2,27 @@
 //! path. The allocator-based allocate/import, virtual/physical memory, buffer
 //! map/unmap/ptr/size/lifetime, synchronous h2d/d2h transfers, and the
 //! stream-ordered hrx_buffer_allocate (queue alloca + hrx exact pool) are ported.
+//!
+//! Phase-2 owned model: the opaque `hrx_buffer_t` is the `Arc` data pointer of an
+//! `HrxBufferS`. retain/release are `Arc` refcount ops, and on the last release
+//! the fields drop in declaration order — `map` (unmap if still mapped) →
+//! `hal_buffer` → `hal_pool` → `device` — which reproduces the C release sequence.
+//! The mutable map state lives in a `RefCell` (single-threaded, non-atomic, like
+//! the C object's plain struct fields). The destructive virtual-memory release
+//! takes the object apart by field (`into_inner_handle`) so the HAL buffer can be
+//! handed to `iree_hal_allocator_virtual_memory_release` rather than the
+//! `iree_hal_buffer_release` that `HalBuffer`'s `Drop` would otherwise call.
 #![allow(non_snake_case)]
 
+use core::cell::RefCell;
 #[allow(unused_imports)] use core::ffi::c_void;
-use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::common::*;
-use crate::device::{hrx_device_release, hrx_device_retain, HrxAllocatorInline, HrxDevice};
+use crate::device::{hrx_device_release, hrx_device_retain, DeviceRef, HrxAllocatorInline, HrxDevice};
+use crate::handle::{handle_ref, handle_release, handle_retain, into_handle, into_inner_handle};
 use crate::pool::hrx_iree_exact_pool_create;
 use crate::stream::{hrx_stream_flush, stream_device, stream_semaphore, stream_set_timepoint, stream_timepoint, HrxStream};
+use iree_hal::{HalBuffer, HalPool};
 use iree_sys as iree;
 use iree_sys::fem;
 use iree_sys::init as ireei;
@@ -33,24 +45,55 @@ pub struct HrxBufferParams {
     pub queue_affinity: u64,
 }
 
-/// `hrx_buffer_s` (hrx_internal.h):
-/// { ref_count, hal_buffer, hal_pool, device, mem_type, size,
-///   mapping (iree_hal_buffer_mapping_t, 48B), is_mapped, mapped_ptr }.
-#[repr(C)]
+/// A live scoped mapping. Holds the IREE `mapping` storage (self-contained — IREE
+/// keeps its bookkeeping inside the struct, so it may be moved into the heap) and
+/// the mapped data pointer. `Drop` unmaps it: this fires only when the buffer is
+/// dropped while still mapped, matching C's release-path `iree_status_ignore`
+/// unmap. The explicit `hrx_buffer_unmap` path takes the value out and forgets it
+/// after unmapping (so the status can be returned and `Drop` does not unmap twice).
+struct MappedRange {
+    mapping: ireei::iree_hal_buffer_mapping_t,
+    ptr: *mut c_void,
+}
+
+impl Drop for MappedRange {
+    fn drop(&mut self) {
+        // SAFETY: `mapping` was filled by a successful scoped map of this buffer;
+        // the status is freed (ignored), matching C's release-path unmap.
+        unsafe {
+            let s = ireei::iree_hal_buffer_unmap_range(&mut self.mapping);
+            iree::iree_status_free(s);
+        }
+    }
+}
+
+/// `hrx_buffer_s` — the internal object behind the opaque `hrx_buffer_t`.
+/// Field/declaration order is load-bearing for drop: `map` (unmap) → `hal_buffer`
+/// → `hal_pool` → `device`, matching the C release order. `HrxBufferS` has no
+/// explicit `Drop` so the virtual-memory release path can move fields out of it.
 pub struct HrxBufferS {
-    pub ref_count: AtomicI32,
-    pub hal_buffer: *mut ireei::iree_hal_buffer_t,
-    pub hal_pool: *mut c_void, // iree_hal_pool_t* (set on the stream-alloca path)
-    pub device: HrxDevice,
-    pub mem_type: u32,
-    pub size: usize,
-    pub mapping: ireei::iree_hal_buffer_mapping_t,
-    pub is_mapped: bool,
-    pub mapped_ptr: *mut c_void,
+    map: RefCell<Option<MappedRange>>,
+    hal_buffer: HalBuffer,
+    /// Non-`None` only on the stream-alloca path (a transient per-allocation pool).
+    hal_pool: Option<HalPool>,
+    device: DeviceRef,
+    /// Kept only to mirror the C `hrx_buffer_s` field set; no ported API reads it.
+    #[allow(dead_code)]
+    mem_type: u32,
+    size: usize,
 }
 
 pub type HrxBuffer = *mut HrxBufferS;
 pub type HrxAllocator = *mut HrxAllocatorInline;
+
+/// Borrow the raw IREE buffer pointer behind a handle (for queue/stream/value-list
+/// submission, which build IREE buffer refs).
+///
+/// # Safety
+/// `buffer` must be a live `hrx_buffer_t`.
+pub(crate) unsafe fn buffer_hal(buffer: HrxBuffer) -> *mut ireei::iree_hal_buffer_t {
+    handle_ref(buffer).hal_buffer.as_ptr()
+}
 
 // --- allocator ops ---
 
@@ -69,14 +112,6 @@ pub unsafe extern "C" fn hrx_allocator_retain(allocator: HrxAllocator) {
 pub unsafe extern "C" fn hrx_allocator_release(allocator: HrxAllocator) {
     ireei::iree_hal_allocator_release((*allocator).hal_allocator.as_ptr());
     hrx_device_release((*allocator).device);
-}
-
-/// Allocate a hrx_buffer_s on the C heap (libc malloc) so the C reference and
-/// Rust free it identically (iree_allocator_free -> libc free), and so the box
-/// isn't tracked by Rust's allocator.
-unsafe fn alloc_buffer_struct() -> *mut HrxBufferS {
-    let p = libc::calloc(1, core::mem::size_of::<HrxBufferS>()) as *mut HrxBufferS;
-    p
 }
 
 #[no_mangle]
@@ -111,18 +146,16 @@ pub unsafe extern "C" fn hrx_allocator_allocate_buffer(
     if !iree::status_is_ok(s) {
         return hrx_status_from_iree(s);
     }
-    let buf = alloc_buffer_struct();
-    if buf.is_null() {
-        ireei::iree_hal_buffer_release(hal_buffer);
-        return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"out of memory".as_ptr());
-    }
-    (*buf).ref_count = AtomicI32::new(1);
-    (*buf).hal_buffer = hal_buffer;
-    (*buf).device = (*allocator).device;
-    hrx_device_retain((*buf).device);
-    (*buf).mem_type = params.type_;
-    (*buf).size = size;
-    *buffer = buf;
+    let hal_buffer = HalBuffer::from_owned(hal_buffer).expect("OK alloc with null buffer");
+    let device = DeviceRef::retain((*allocator).device);
+    *buffer = into_handle(HrxBufferS {
+        map: RefCell::new(None),
+        hal_buffer,
+        hal_pool: None,
+        device,
+        mem_type: params.type_,
+        size,
+    });
     hrx_ok_status()
 }
 
@@ -130,36 +163,17 @@ pub unsafe extern "C" fn hrx_allocator_allocate_buffer(
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_buffer_retain(buffer: HrxBuffer) {
-    ireei::iree_hal_buffer_retain((*buffer).hal_buffer);
-    // hal_pool is non-null only on the stream-alloca path; iree_hal_pool_retain
-    // is NULL-safe, matching the C unconditional call.
-    ireei::iree_hal_pool_retain((*buffer).hal_pool);
-    hrx_device_retain((*buffer).device);
-    (*buffer).ref_count.fetch_add(1, Ordering::Relaxed);
-}
-
-unsafe fn buffer_unmap_internal(buffer: HrxBuffer) -> iree::iree_status_t {
-    let s = ireei::iree_hal_buffer_unmap_range(&mut (*buffer).mapping);
-    (*buffer).is_mapped = false;
-    (*buffer).mapped_ptr = core::ptr::null_mut();
-    s
+    handle_retain(buffer);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_buffer_release(buffer: HrxBuffer) {
-    let hal_buffer = (*buffer).hal_buffer;
-    let hal_pool = (*buffer).hal_pool;
-    let device = (*buffer).device;
-    if (*buffer).ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
-        if (*buffer).is_mapped {
-            let s = buffer_unmap_internal(buffer);
-            iree::iree_status_free(s);
-        }
-        libc::free(buffer as *mut c_void);
-    }
-    ireei::iree_hal_buffer_release(hal_buffer);
-    ireei::iree_hal_pool_release(hal_pool); // NULL-safe; matches C
-    hrx_device_release(device);
+    // The HAL teardown (unmap-if-mapped, release hal_buffer/pool/device) moved into
+    // the field drops, which run on the last reference. The C code released the HAL
+    // objects on every call to balance per-retain HAL retains; the owned model
+    // holds one reference each for the buffer's lifetime and releases them once on
+    // drop — observably equivalent.
+    handle_release(buffer);
 }
 
 #[no_mangle]
@@ -176,7 +190,9 @@ pub unsafe extern "C" fn hrx_buffer_map(
             c"buffer or mapped_ptr is NULL".as_ptr(),
         );
     }
-    if (*buffer).is_mapped {
+    let buf = handle_ref(buffer);
+    let mut map = buf.map.borrow_mut();
+    if map.is_some() {
         return hrx_make_status(
             HrxStatusCode::FailedPrecondition as i32,
             c"buffer is already mapped".as_ptr(),
@@ -192,20 +208,23 @@ pub unsafe extern "C" fn hrx_buffer_map(
     if flags & HRX_MAP_DISCARD != 0 {
         access |= ireei::IREE_HAL_MEMORY_ACCESS_DISCARD_WRITE;
     }
+    // Map into a stack temporary, then move it into the heap. The IREE mapping is
+    // self-contained (no captured address), so the move is sound.
+    let mut mapping = ireei::iree_hal_buffer_mapping_t::zeroed();
     let s = ireei::iree_hal_buffer_map_range(
-        (*buffer).hal_buffer,
+        buf.hal_buffer.as_ptr(),
         ireei::IREE_HAL_MAPPING_MODE_SCOPED,
         access,
         offset as u64,
         size as u64,
-        &mut (*buffer).mapping,
+        &mut mapping,
     );
     if !iree::status_is_ok(s) {
         return hrx_status_from_iree(s);
     }
-    (*buffer).is_mapped = true;
-    (*buffer).mapped_ptr = (*buffer).mapping.contents.data as *mut c_void;
-    *mapped_ptr = (*buffer).mapping.contents.data as *mut c_void;
+    let ptr = mapping.contents.data as *mut c_void;
+    *map = Some(MappedRange { mapping, ptr });
+    *mapped_ptr = ptr;
     hrx_ok_status()
 }
 
@@ -214,10 +233,16 @@ pub unsafe extern "C" fn hrx_buffer_unmap(buffer: HrxBuffer) -> HrxStatus {
     if buffer.is_null() {
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"buffer is NULL".as_ptr());
     }
-    if !(*buffer).is_mapped {
-        return hrx_ok_status(); // not mapped, no-op
+    let prev = handle_ref(buffer).map.borrow_mut().take();
+    match prev {
+        None => hrx_ok_status(), // not mapped, no-op
+        Some(mut m) => {
+            let s = ireei::iree_hal_buffer_unmap_range(&mut m.mapping);
+            // Already unmapped here; suppress the MappedRange Drop's second unmap.
+            core::mem::forget(m);
+            hrx_status_from_iree(s)
+        }
     }
-    hrx_status_from_iree(buffer_unmap_internal(buffer))
 }
 
 #[no_mangle]
@@ -231,22 +256,25 @@ pub unsafe extern "C" fn hrx_buffer_get_device_ptr(
             c"buffer or device_ptr is NULL".as_ptr(),
         );
     }
-    if !(*buffer).mapped_ptr.is_null() {
-        *device_ptr = (*buffer).mapped_ptr;
+    let buf = handle_ref(buffer);
+    let mut map = buf.map.borrow_mut();
+    if let Some(m) = map.as_ref() {
+        *device_ptr = m.ptr;
         return hrx_ok_status();
     }
+    let mut mapping = ireei::iree_hal_buffer_mapping_t::zeroed();
     let s = ireei::iree_hal_buffer_map_range(
-        (*buffer).hal_buffer,
+        buf.hal_buffer.as_ptr(),
         ireei::IREE_HAL_MAPPING_MODE_SCOPED,
         ireei::IREE_HAL_MEMORY_ACCESS_ALL,
         0,
-        (*buffer).size as u64,
-        &mut (*buffer).mapping,
+        buf.size as u64,
+        &mut mapping,
     );
     if iree::status_is_ok(s) {
-        (*buffer).is_mapped = true;
-        (*buffer).mapped_ptr = (*buffer).mapping.contents.data as *mut c_void;
-        *device_ptr = (*buffer).mapped_ptr;
+        let ptr = mapping.contents.data as *mut c_void;
+        *map = Some(MappedRange { mapping, ptr });
+        *device_ptr = ptr;
         return hrx_ok_status();
     }
     iree::iree_status_free(s);
@@ -265,7 +293,7 @@ pub unsafe extern "C" fn hrx_buffer_get_size(buffer: HrxBuffer, size: *mut usize
             c"buffer or size is NULL".as_ptr(),
         );
     }
-    *size = (*buffer).size;
+    *size = handle_ref(buffer).size;
     hrx_ok_status()
 }
 
@@ -282,7 +310,8 @@ pub unsafe extern "C" fn hrx_synchronous_h2d(
     if device.is_null() || host_src.is_null() || dst.is_null() {
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"NULL argument".as_ptr());
     }
-    if dst_offset + size > (*dst).size {
+    let dst_buf = handle_ref(dst);
+    if dst_offset + size > dst_buf.size {
         return hrx_make_status(
             HrxStatusCode::OutOfRange as i32,
             c"transfer exceeds buffer size".as_ptr(),
@@ -291,7 +320,7 @@ pub unsafe extern "C" fn hrx_synchronous_h2d(
     hrx_status_from_iree(ireei::iree_hal_device_transfer_h2d(
         (*device).hal_device.as_ptr(),
         host_src,
-        (*dst).hal_buffer,
+        dst_buf.hal_buffer.as_ptr(),
         dst_offset as u64,
         size as u64,
         ireei::IREE_HAL_TRANSFER_BUFFER_FLAG_DEFAULT,
@@ -310,7 +339,8 @@ pub unsafe extern "C" fn hrx_synchronous_d2h(
     if device.is_null() || src.is_null() || host_dst.is_null() {
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"NULL argument".as_ptr());
     }
-    if src_offset + size > (*src).size {
+    let src_buf = handle_ref(src);
+    if src_offset + size > src_buf.size {
         return hrx_make_status(
             HrxStatusCode::OutOfRange as i32,
             c"transfer exceeds buffer size".as_ptr(),
@@ -318,7 +348,7 @@ pub unsafe extern "C" fn hrx_synchronous_d2h(
     }
     hrx_status_from_iree(ireei::iree_hal_device_transfer_d2h(
         (*device).hal_device.as_ptr(),
-        (*src).hal_buffer,
+        src_buf.hal_buffer.as_ptr(),
         src_offset as u64,
         host_dst,
         size as u64,
@@ -369,18 +399,16 @@ pub unsafe extern "C" fn hrx_allocator_import_buffer(
     if !iree::status_is_ok(s) {
         return hrx_status_from_iree(s);
     }
-    let buf = alloc_buffer_struct();
-    if buf.is_null() {
-        ireei::iree_hal_buffer_release(hal_buffer);
-        return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"out of memory".as_ptr());
-    }
-    (*buf).ref_count = AtomicI32::new(1);
-    (*buf).hal_buffer = hal_buffer;
-    (*buf).device = (*allocator).device;
-    hrx_device_retain((*buf).device);
-    (*buf).mem_type = params.type_;
-    (*buf).size = size;
-    *buffer = buf;
+    let hal_buffer = HalBuffer::from_owned(hal_buffer).expect("OK import with null buffer");
+    let device = DeviceRef::retain((*allocator).device);
+    *buffer = into_handle(HrxBufferS {
+        map: RefCell::new(None),
+        hal_buffer,
+        hal_pool: None,
+        device,
+        mem_type: params.type_,
+        size,
+    });
     hrx_ok_status()
 }
 
@@ -441,18 +469,16 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_reserve(
     if !iree::status_is_ok(s) {
         return hrx_status_from_iree(s);
     }
-    let buf = alloc_buffer_struct();
-    if buf.is_null() {
-        fem::iree_hal_allocator_virtual_memory_release((*allocator).hal_allocator.as_ptr(), hal_buffer);
-        return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"out of memory".as_ptr());
-    }
-    (*buf).ref_count = AtomicI32::new(1);
-    (*buf).hal_buffer = hal_buffer;
-    (*buf).device = (*allocator).device;
-    hrx_device_retain((*buf).device);
-    (*buf).mem_type = 0x30; // HRX_MEMORY_TYPE_DEVICE_LOCAL
-    (*buf).size = size;
-    *virtual_buffer = buf;
+    let hal_buffer = HalBuffer::from_owned(hal_buffer).expect("OK reserve with null buffer");
+    let device = DeviceRef::retain((*allocator).device);
+    *virtual_buffer = into_handle(HrxBufferS {
+        map: RefCell::new(None),
+        hal_buffer,
+        hal_pool: None,
+        device,
+        mem_type: 0x30, // HRX_MEMORY_TYPE_DEVICE_LOCAL
+        size,
+    });
     hrx_ok_status()
 }
 
@@ -464,11 +490,17 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_release(
     if allocator.is_null() || virtual_buffer.is_null() {
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"NULL argument".as_ptr());
     }
-    let s = fem::iree_hal_allocator_virtual_memory_release((*allocator).hal_allocator.as_ptr(), (*virtual_buffer).hal_buffer);
-    // hal_buffer ownership transferred; free the hrx wrapper.
-    (*virtual_buffer).hal_buffer = core::ptr::null_mut();
-    hrx_device_release((*virtual_buffer).device);
-    libc::free(virtual_buffer as *mut c_void);
+    // Destructive release: take the object out of its Arc (single owner) and hand
+    // the HAL buffer to virtual_memory_release instead of iree_hal_buffer_release.
+    let inner = into_inner_handle(virtual_buffer)
+        .expect("virtual buffer released with outstanding references");
+    let HrxBufferS { map, hal_buffer, hal_pool, device, mem_type: _, size: _ } = inner;
+    // `into_raw` forgets the wrapper so its Drop does not also release the buffer.
+    let hal_ptr = hal_buffer.into_raw();
+    drop(map); // virtual buffers are never mapped; None → no-op
+    drop(hal_pool); // None → no-op
+    let s = fem::iree_hal_allocator_virtual_memory_release((*allocator).hal_allocator.as_ptr(), hal_ptr);
+    drop(device); // hrx_device_release, after virtual_memory_release — matches C order
     hrx_status_from_iree(s)
 }
 
@@ -525,7 +557,7 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_map(
     }
     hrx_status_from_iree(fem::iree_hal_allocator_virtual_memory_map(
         (*allocator).hal_allocator.as_ptr(),
-        (*virtual_buffer).hal_buffer,
+        buffer_hal(virtual_buffer),
         virtual_offset as u64,
         physical,
         physical_offset as u64,
@@ -545,7 +577,7 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_unmap(
     }
     hrx_status_from_iree(fem::iree_hal_allocator_virtual_memory_unmap(
         (*allocator).hal_allocator.as_ptr(),
-        (*virtual_buffer).hal_buffer,
+        buffer_hal(virtual_buffer),
         virtual_offset as u64,
         size as u64,
     ))
@@ -564,7 +596,7 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_protect(
     }
     hrx_status_from_iree(fem::iree_hal_allocator_virtual_memory_protect(
         (*allocator).hal_allocator.as_ptr(),
-        (*virtual_buffer).hal_buffer,
+        buffer_hal(virtual_buffer),
         virtual_offset as u64,
         size as u64,
         ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
@@ -589,11 +621,6 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"allocation size must be > 0".as_ptr());
     }
 
-    let buf = alloc_buffer_struct();
-    if buf.is_null() {
-        return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"out of memory".as_ptr());
-    }
-
     let allocator = (*stream_device(stream)).allocator.hal_allocator.as_ptr();
     let mut params = ireei::iree_hal_buffer_params_t {
         usage,
@@ -613,13 +640,11 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
         core::ptr::null_mut(),
     );
     if compatibility & ireei::IREE_HAL_BUFFER_COMPATIBILITY_ALLOCATABLE == 0 {
-        libc::free(buf as *mut c_void);
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"buffer params are not allocatable on this device".as_ptr());
     }
 
     let flush_status = hrx_stream_flush(stream);
     if !hrx_status_is_ok(flush_status) {
-        libc::free(buf as *mut c_void);
         return flush_status;
     }
 
@@ -637,18 +662,20 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
         payload_values: &mut signal_value,
     };
 
-    let mut status = hrx_iree_exact_pool_create(allocator, params, &mut (*buf).hal_pool);
+    let mut raw_pool: *mut iree::iree_hal_pool_t = core::ptr::null_mut();
+    let mut raw_buffer: *mut ireei::iree_hal_buffer_t = core::ptr::null_mut();
+    let mut status = hrx_iree_exact_pool_create(allocator, params, &mut raw_pool);
     if iree::status_is_ok(status) {
         status = ireei::iree_hal_device_queue_alloca(
             (*stream_device(stream)).hal_device.as_ptr(),
             ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
             wait_list,
             signal_list,
-            (*buf).hal_pool,
+            raw_pool,
             params,
             size as u64,
             0, // IREE_HAL_ALLOCA_FLAG_NONE
-            &mut (*buf).hal_buffer,
+            &mut raw_buffer,
         );
     }
     if iree::status_is_ok(status) {
@@ -657,20 +684,22 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
         status = ireei::iree_hal_semaphore_wait(sem, signal_value, ireei::iree_timeout_t::infinite(), 0);
     }
     if !iree::status_is_ok(status) {
-        ireei::iree_hal_buffer_release((*buf).hal_buffer);
-        ireei::iree_hal_pool_release((*buf).hal_pool);
-        libc::free(buf as *mut c_void);
+        ireei::iree_hal_buffer_release(raw_buffer); // NULL-safe
+        ireei::iree_hal_pool_release(raw_pool); // NULL-safe
         return hrx_status_from_iree(status);
     }
 
-    (*buf).ref_count = AtomicI32::new(1);
-    (*buf).device = stream_device(stream);
-    hrx_device_retain((*buf).device);
-    (*buf).mem_type = mem_type;
-    (*buf).size = size;
-    (*buf).mapped_ptr = core::ptr::null_mut();
+    let hal_buffer = HalBuffer::from_owned(raw_buffer).expect("OK alloca with null buffer");
+    let hal_pool = HalPool::from_owned(raw_pool);
+    let device = DeviceRef::retain(stream_device(stream));
     stream_set_timepoint(stream, signal_value);
-
-    *buffer = buf;
+    *buffer = into_handle(HrxBufferS {
+        map: RefCell::new(None),
+        hal_buffer,
+        hal_pool,
+        device,
+        mem_type,
+        size,
+    });
     hrx_ok_status()
 }
