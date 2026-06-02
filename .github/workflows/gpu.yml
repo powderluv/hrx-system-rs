@@ -26,4 +26,19 @@ jobs:
       - name: performance parity (rust / c-hrx)
         run: bash scripts/bench_libhrx_parity.sh
 
-      # TODO(phase 4): libhrx CTS (--hrx-library libhrx_rs.so), ASAN/UBSAN lanes.
+      - name: AddressSanitizer (GPU-free suites, real IREE)
+        # Builds libhrx_rs.so with -Zsanitizer=address (+ -Zbuild-std) on the
+        # pinned nightly and runs the GPU-free suites under ASAN; clang compiles
+        # the C test programs to match rustc's LLVM ASAN runtime. ASAN intercepts
+        # malloc/free process-wide, so heap UAF/double-free are caught across the
+        # FFI boundary into the (uninstrumented) statically-linked IREE.
+        run: |
+          rustup toolchain install nightly-2026-04-03 --profile minimal --component rust-src
+          bash scripts/sanitizer_diff.sh address
+
+      # TSAN is intentionally NOT a lane: IREE is statically linked + uninstrumented,
+      # so TSAN reports irreducible false races inside IREE's own threading. See
+      # scripts/sanitizer_diff.sh (thread mode, investigation-only) and
+      # scripts/tsan_suppressions.txt. Rust UB is covered by the `miri` job in
+      # checks.yml — rustc has no UBSAN.
+      # TODO(phase 4): libhrx CTS (--hrx-library libhrx_rs.so); fuzz lane.

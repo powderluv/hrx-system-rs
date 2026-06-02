@@ -599,10 +599,28 @@ geomean 1.002):
     `cargo-geiger` (slow to compile, fragile in CI) — same creep-prevention,
     dependency-free, instant. Counts the meaningful unsafe *operations*, not the
     fixed `pub unsafe extern "C" fn` ABI surface.
-  - [ ] **Remaining:** ASAN/UBSAN CI lanes over the GPU differential (real IREE,
-    MI300 runner); GPU-free fuzz targets incl. the stateful alloc/retain/release
-    lifecycle fuzzer (against the mock backend); best-effort TSAN; optionally extend
-    the Miri mock to the owned-object create chains.
+  - [x] **AddressSanitizer lane** (`scripts/sanitizer_diff.sh address` +
+    `gpu.yml`). Builds `libhrx_rs.so` with `-Zsanitizer=address` (+ `-Zbuild-std`)
+    on the pinned nightly; clang compiles the C test programs to match rustc's LLVM
+    ASAN runtime (gcc's libasan would conflict). ASAN intercepts malloc/free
+    process-wide, so heap UAF/double-free/overflow are caught across the FFI
+    boundary into the statically-linked (uninstrumented) IREE. **MI300: all 6
+    GPU-free suites clean under ASAN** (the GPU/HSA path is excluded — it dlopens a
+    runtime ASAN dislikes). The owned-Arc model's teardown holds under real ASAN
+    with real IREE.
+  - [x] **UBSAN → Miri.** rustc has no `-Zsanitizer=undefined`; Rust UB is covered
+    by the Miri lane (already in CI). `sanitizer_diff.sh` rejects `undefined` with
+    that pointer. (Honest substitution: there is no runtime UBSAN for Rust.)
+  - [x] **TSAN attempted; not a viable gate** (documented). IREE is statically
+    linked + uninstrumented, so TSAN can't see its internal synchronization and
+    reports irreducible false races inside IREE's task queue / worker pool (each
+    suppression just surfaces the next one deeper in IREE). Kept as an
+    investigation-only mode (`sanitizer_diff.sh thread` + `tsan_suppressions.txt`)
+    for future work; a real TSAN lane needs a `-fsanitize=thread` IREE build (out
+    of scope). Not wired into CI.
+  - [ ] **Remaining:** GPU-free fuzz targets incl. the stateful alloc/retain/
+    release lifecycle fuzzer; optionally extend the Miri mock to the owned-object
+    create chains.
 
 ### Alternatives Considered (pool)
 

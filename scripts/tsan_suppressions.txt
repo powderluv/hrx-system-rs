@@ -1,0 +1,25 @@
+# ThreadSanitizer suppressions for the investigation-only TSAN mode of
+# scripts/sanitizer_diff.sh. READ THIS before relying on TSAN here.
+#
+# TSAN instruments only the Rust side; IREE is statically linked into libhrx_rs.so
+# and is NOT instrumented. TSAN therefore cannot observe the happens-before edges
+# inside IREE's synchronization primitives (task queues, semaphores, the worker
+# thread pool), and reports false races wherever data flows between the caller
+# thread and an IREE worker thread. These are NOT bugs in the port — the C libhrx
+# drives the identical IREE code and is correct.
+#
+# Crucially, these false positives are NOT fully suppressible: as each is silenced,
+# TSAN surfaces the next one deeper inside IREE's threading (host_call handoff →
+# task_queue drain → queue init → ...). Silencing all of them means suppressing
+# essentially all of IREE's concurrency, at which point TSAN checks nothing. So
+# TSAN is NOT a gating or advisory-clean lane here: `address` (ASAN) is the gate,
+# Miri covers Rust UB, and a meaningful TSAN lane would require building IREE
+# itself with `-fsanitize=thread` (large, out of scope — future work).
+#
+# The entries below document the known FP patterns seen on the GPU-free suites;
+# they are a starting point for that future instrumented-IREE work, not a path to a
+# clean run today.
+race:host_call_trampoline
+race:hrx_queue_host_call
+race:iree_hal_task_queue_drain_recording
+race:iree_hal_task_queue_initialize
