@@ -15,3 +15,7 @@ cd "$(dirname "$0")/.."
 
 # Pure-Rust handle boundary (no FFI, no mock needed).
 cargo "+$TOOLCHAIN" miri test -p hrx-libhrx --lib handle::tests "$@"
+
+# iree-hal RAII wrappers against the in-memory mock IREE backend (retain/release
+# discipline: Clone, move-only Drop, and the into_raw ownership transfer).
+cargo "+$TOOLCHAIN" miri test -p iree-hal "$@"

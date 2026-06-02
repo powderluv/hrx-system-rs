@@ -135,7 +135,10 @@ extern "C" {
         host_allocator: iree_allocator_t,
         out_fence: *mut *mut iree_hal_fence_t,
     ) -> iree_status_t;
+    // fence retain+release are replaced by the Miri mock shims below (cfg(miri)).
+    #[cfg(not(miri))]
     pub fn iree_hal_fence_retain(fence: *mut iree_hal_fence_t);
+    #[cfg(not(miri))]
     pub fn iree_hal_fence_release(fence: *mut iree_hal_fence_t);
     pub fn iree_hal_fence_insert(
         fence: *mut iree_hal_fence_t,
@@ -310,6 +313,16 @@ extern "C" {
         queue_affinity: u64,
         protection: u32,
     ) -> iree_status_t;
+}
+
+// Miri shims for fence retain/release; see the matching note in `init`.
+#[cfg(miri)]
+pub unsafe extern "C" fn iree_hal_fence_retain(fence: *mut iree_hal_fence_t) {
+    unsafe { crate::mock::retain(fence as *mut core::ffi::c_void) }
+}
+#[cfg(miri)]
+pub unsafe extern "C" fn iree_hal_fence_release(fence: *mut iree_hal_fence_t) {
+    unsafe { crate::mock::release(fence as *mut core::ffi::c_void) }
 }
 
 pub const IREE_HAL_EXTERNAL_BUFFER_TYPE_HOST_ALLOCATION: u32 = 1;

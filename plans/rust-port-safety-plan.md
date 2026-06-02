@@ -582,8 +582,17 @@ geomean 1.002):
     backend (a small Rust impl of the IREE objects' refcount/lifecycle — *not* a
     production rewrite; Miri can only check Rust-side memory discipline, never GPU
     execution, so a real Rust IREE would add nothing over the mock).
-  - [ ] Object-model under Miri (mock IREE backend → wrapper + owned-object
-    lifecycle tests).
+  - [x] **Mock IREE backend → wrapper Miri tests.** `iree_sys::mock` (built only
+    under `cfg(miri)`) replaces the IREE retain/release externs with an in-memory
+    refcount where each handle is a real heap node — so Miri's allocator tracking
+    is the leak/double-free oracle. iree-hal wrapper tests cover the three shapes:
+    `Clone`+`Drop` (fence), move-only `Drop` (buffer, pool), and the `into_raw`
+    ownership transfer used by the buffer's vmem destructure. 4 tests pass clean
+    under Miri. Scoped to fence/buffer/pool symbols (init/fem `cfg(miri)` shims);
+    the change is inert under non-Miri (externs unchanged). This is the plan's
+    "in-memory fake," and the bounded answer to "rewrite IREE in Rust": a tiny Rust
+    stand-in for the object lifecycle, not a production runtime.
+  - [ ] Extend the mock to the owned-object lifecycles (create chains) as needed.
   - [ ] ASAN/UBSAN CI lanes over the GPU differential (real IREE, MI300 runner).
   - [ ] GPU-free fuzz targets incl. the stateful alloc/retain/release lifecycle
     fuzzer (against the mock backend).

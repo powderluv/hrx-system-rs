@@ -340,7 +340,10 @@ extern "C" {
     pub fn iree_async_notification_signal(notification: *mut iree_async_notification_t, wake_count: i32);
 
     // HAL pool + buffer length + queue alloca (hrx_buffer_allocate path).
+    // pool/buffer retain+release are replaced by the Miri mock below (cfg(miri)).
+    #[cfg(not(miri))]
     pub fn iree_hal_pool_retain(pool: *mut iree_hal_pool_t);
+    #[cfg(not(miri))]
     pub fn iree_hal_pool_release(pool: *mut iree_hal_pool_t);
     pub fn iree_hal_buffer_byte_length(buffer: *mut iree_hal_buffer_t) -> iree_device_size_t;
     pub fn iree_hal_device_queue_alloca(
@@ -461,7 +464,9 @@ extern "C" {
     ) -> u32; // iree_hal_buffer_compatibility_t (bitfield)
 
     // --- HAL buffer: retain/release/map/unmap ---
+    #[cfg(not(miri))]
     pub fn iree_hal_buffer_retain(buffer: *mut iree_hal_buffer_t);
+    #[cfg(not(miri))]
     pub fn iree_hal_buffer_release(buffer: *mut iree_hal_buffer_t);
     pub fn iree_hal_buffer_map_range(
         buffer: *mut iree_hal_buffer_t,
@@ -611,6 +616,26 @@ extern "C" {
         bindings: iree_hal_buffer_ref_list_t,
         flags: iree_hal_dispatch_flags_t,
     ) -> iree_status_t;
+}
+
+// Miri shims: under Miri the pool/buffer retain+release above are dropped and
+// these in-memory refcount stand-ins take their place, so the iree-hal wrappers'
+// Drop/Clone run against `crate::mock` (which Miri's allocator tracking verifies).
+#[cfg(miri)]
+pub unsafe extern "C" fn iree_hal_pool_retain(pool: *mut iree_hal_pool_t) {
+    unsafe { crate::mock::retain(pool as *mut core::ffi::c_void) }
+}
+#[cfg(miri)]
+pub unsafe extern "C" fn iree_hal_pool_release(pool: *mut iree_hal_pool_t) {
+    unsafe { crate::mock::release(pool as *mut core::ffi::c_void) }
+}
+#[cfg(miri)]
+pub unsafe extern "C" fn iree_hal_buffer_retain(buffer: *mut iree_hal_buffer_t) {
+    unsafe { crate::mock::retain(buffer as *mut core::ffi::c_void) }
+}
+#[cfg(miri)]
+pub unsafe extern "C" fn iree_hal_buffer_release(buffer: *mut iree_hal_buffer_t) {
+    unsafe { crate::mock::release(buffer as *mut core::ffi::c_void) }
 }
 
 /// `iree_hal_host_call_t` (16B): { fn, user_data }. The fn is

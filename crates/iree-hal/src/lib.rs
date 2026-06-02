@@ -568,3 +568,51 @@ impl Drop for HalVmList {
         unsafe { iree::iree_vm_list_release(self.0.as_ptr()) };
     }
 }
+
+#[cfg(all(test, miri))]
+mod miri_tests {
+    //! Miri verification of the RAII wrappers' retain/release discipline against
+    //! the in-memory mock backend (`iree_sys::mock`). Under Miri the IREE
+    //! retain/release externs are the mock, where each handle is a real refcounted
+    //! heap node — so Miri's allocator tracking reports a leak if a wrapper fails
+    //! to release, and a double-free if it releases too often. The wrappers tested
+    //! here cover the three shapes: `Clone`+`Drop` (retain/release), move-only
+    //! `Drop`, and the `into_raw` ownership transfer used by the buffer's
+    //! virtual-memory destructure.
+    use super::*;
+    use iree_sys::mock;
+
+    #[test]
+    fn fence_clone_retains_and_drops_balance() {
+        let h = mock::new_handle() as *mut fem::iree_hal_fence_t;
+        let f = unsafe { HalFence::from_owned(h) }.expect("non-null"); // count 1
+        let g = f.clone(); // retain -> 2
+        drop(f); // release -> 1 (must NOT free)
+        drop(g); // release -> 0 (free exactly once; Miri checks)
+    }
+
+    #[test]
+    fn buffer_move_only_drop_releases_once() {
+        let h = mock::new_handle() as *mut ireei::iree_hal_buffer_t;
+        let b = unsafe { HalBuffer::from_owned(h) }.expect("non-null");
+        drop(b); // frees once
+    }
+
+    #[test]
+    fn buffer_into_raw_transfers_without_releasing() {
+        let h = mock::new_handle() as *mut ireei::iree_hal_buffer_t;
+        let b = unsafe { HalBuffer::from_owned(h) }.expect("non-null");
+        let p = b.into_raw(); // must NOT release; refcount stays 1
+        // If into_raw wrongly released, the node is already freed and this second
+        // release is a double-free that Miri reports. Correct behavior: this is the
+        // single release that frees it.
+        unsafe { mock::release(p as *mut core::ffi::c_void) };
+    }
+
+    #[test]
+    fn pool_move_only_drop_releases_once() {
+        let h = mock::new_handle() as *mut iree::iree_hal_pool_t;
+        let p = unsafe { HalPool::from_owned(h) }.expect("non-null");
+        drop(p);
+    }
+}

@@ -41,6 +41,10 @@ pub type iree_hal_pool_t = c_void;
 pub mod fem;
 pub mod init;
 mod abi_layout;
+/// In-memory refcount mock backing the Miri lane; see the module docs. Built only
+/// under Miri, where it replaces the real `iree_*_retain`/`release` externs.
+#[cfg(miri)]
+pub mod mock;
 
 /// `iree_allocator_null()` (inline) — a zeroed allocator (no self, no ctl).
 #[inline]
