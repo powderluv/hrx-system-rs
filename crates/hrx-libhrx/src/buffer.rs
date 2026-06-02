@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use crate::common::*;
 use crate::device::{hrx_device_release, hrx_device_retain, HrxAllocatorInline, HrxDevice};
 use crate::pool::hrx_iree_exact_pool_create;
-use crate::stream::{hrx_stream_flush, HrxStream};
+use crate::stream::{hrx_stream_flush, stream_device, stream_semaphore, stream_set_timepoint, stream_timepoint, HrxStream};
 use iree_sys as iree;
 use iree_sys::fem;
 use iree_sys::init as ireei;
@@ -594,7 +594,7 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
         return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"out of memory".as_ptr());
     }
 
-    let allocator = (*(*stream).device).allocator.hal_allocator.as_ptr();
+    let allocator = (*stream_device(stream)).allocator.hal_allocator.as_ptr();
     let mut params = ireei::iree_hal_buffer_params_t {
         usage,
         access: ireei::IREE_HAL_MEMORY_ACCESS_ALL,
@@ -623,11 +623,11 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
         return flush_status;
     }
 
-    let mut wait_value = (*stream).timepoint;
-    let mut signal_value = (*stream).timepoint + 1;
-    let mut sem = crate::semaphore::semaphore_hal_ptr((*stream).semaphore);
+    let mut wait_value = stream_timepoint(stream);
+    let mut signal_value = stream_timepoint(stream) + 1;
+    let mut sem = crate::semaphore::semaphore_hal_ptr(stream_semaphore(stream));
     let wait_list = ireei::iree_hal_semaphore_list_t {
-        count: if (*stream).timepoint > 0 { 1 } else { 0 },
+        count: if stream_timepoint(stream) > 0 { 1 } else { 0 },
         semaphores: &mut sem,
         payload_values: &mut wait_value,
     };
@@ -640,7 +640,7 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
     let mut status = hrx_iree_exact_pool_create(allocator, params, &mut (*buf).hal_pool);
     if iree::status_is_ok(status) {
         status = ireei::iree_hal_device_queue_alloca(
-            (*(*stream).device).hal_device.as_ptr(),
+            (*stream_device(stream)).hal_device.as_ptr(),
             ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
             wait_list,
             signal_list,
@@ -664,12 +664,12 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
     }
 
     (*buf).ref_count = AtomicI32::new(1);
-    (*buf).device = (*stream).device;
+    (*buf).device = stream_device(stream);
     hrx_device_retain((*buf).device);
     (*buf).mem_type = mem_type;
     (*buf).size = size;
     (*buf).mapped_ptr = core::ptr::null_mut();
-    (*stream).timepoint = signal_value;
+    stream_set_timepoint(stream, signal_value);
 
     *buffer = buf;
     hrx_ok_status()

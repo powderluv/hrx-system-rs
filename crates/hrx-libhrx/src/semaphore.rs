@@ -35,6 +35,27 @@ pub(crate) unsafe fn semaphore_hal_ptr(sem: HrxSemaphore) -> *mut ireei::iree_ha
     handle_ref(sem).hal.as_ptr()
 }
 
+/// RAII guard for a semaphore handle the owner created (born with one ref) and
+/// will release on drop. Used by the stream, which owns its timeline semaphore.
+pub(crate) struct SemaphoreGuard(HrxSemaphore);
+
+impl SemaphoreGuard {
+    /// Take ownership of a freshly-created semaphore (born with one reference).
+    pub(crate) fn from_born(sem: HrxSemaphore) -> Self {
+        Self(sem)
+    }
+    pub(crate) fn as_handle(&self) -> HrxSemaphore {
+        self.0
+    }
+}
+
+impl Drop for SemaphoreGuard {
+    fn drop(&mut self) {
+        // SAFETY: we hold the one born reference; release it once.
+        unsafe { hrx_semaphore_release(self.0) };
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn hrx_semaphore_create(
     device: HrxDevice,

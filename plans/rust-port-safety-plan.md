@@ -505,10 +505,18 @@ geomean 1.002):
   (object + HAL handles). The allocator's `hrx_allocator_retain/release` keep
   their separate balanced `iree_hal_allocator_retain/release` (transient, via
   `as_ptr`), not owned by the wrapper.
-- [ ] Remaining: `buffer`/`stream` (mutable state → interior mutability per the
-  State-shape section: buffer map-state enum with `Drop`-unmap; stream pending
-  command buffer), then `executable`/`module`/`value_list`/`pool`. `Hal` trait /
-  Miri at Phase 4.
+- [x] `stream` migrated to `Arc<HrxStreamS>` with `Cell` interior mutability for
+  the mutable state (`timepoint`/`pending_cb`/`has_pending_work`) and an explicit
+  `Drop` reproducing the exact teardown (flush → wait timepoint → release leftover
+  CB → free → release semaphore → release device). Owns one device ref
+  (`DeviceRef`) + its created semaphore (`SemaphoreGuard`). buffer.rs's
+  `hrx_buffer_allocate` reaches the stream through crate-visible accessors
+  (`stream_device/semaphore/timepoint/set_timepoint`). The pre-existing
+  device-leak-on-semaphore-create-failure is fixed (unobservable). MI300: 7-suite
+  byte-identical, perf gate PASS (geomean 1.015).
+- [ ] Remaining: `buffer` (map-state enum with `Drop`-unmap + the vmem
+  destructive-release handled via `Arc::into_inner`/destructure), then
+  `executable`/`module`/`value_list`/`pool`. `Hal` trait / Miri at Phase 4.
 
 ## Bottom line
 

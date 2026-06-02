@@ -73,6 +73,9 @@ impl DeviceRef {
         hrx_device_retain(device);
         Self(device)
     }
+    pub(crate) fn as_ptr(&self) -> HrxDevice {
+        self.0
+    }
 }
 
 impl Drop for DeviceRef {
