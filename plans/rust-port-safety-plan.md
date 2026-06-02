@@ -638,8 +638,17 @@ geomean 1.002):
     and deliberately releases still-mapped buffers (Drop-unmap path). **Local run:
     7.56M executions in 60s, zero crashes / ASAN errors / leaks.** `scripts/fuzz.sh`
     runs both targets.
-  - [ ] **Optional/future:** extend the Miri mock to owned-object create chains;
-    libhrx CTS against `libhrx_rs.so`.
+  - [x] **libhrx CTS against `libhrx_rs.so`** (`scripts/cts.sh` + `gpu.yml`). The
+    hrx-system Conformance Test Suite (built with `-DLIBHRX_BUILD_CTS=ON`) dlopens
+    the port via `--hrx-library` and runs on the local-task CPU device (GPU-free).
+    **MI300: all 12 CPU categories pass — status, lifecycle, device, host_allocator,
+    allocator, semaphore, stream, memory, transfer, stream_ops, refcount,
+    virtual_memory (~1,900 assertions / 60+ cases) — identical to the C libhrx
+    baseline.** Broad conformance beyond the 7 differential suites.
+    (`executable`/`queue_ops` need a compiled kernel; excluded, per the CTS README.)
+  - [ ] **Optional/future:** extend the Miri mock to owned-object create chains
+    (low marginal value now that the fuzzer + CTS exercise the lifecycles under
+    ASAN); CTS dispatch categories once a test kernel binary is wired in.
 
 Phase 4 is substantially complete: Miri (handle boundary + mock-backed wrappers),
 the unsafe-block ratchet, the AddressSanitizer lane (clean on the GPU-free

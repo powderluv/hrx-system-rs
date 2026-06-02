@@ -36,6 +36,13 @@ jobs:
           rustup toolchain install nightly-2026-04-03 --profile minimal --component rust-src
           bash scripts/sanitizer_diff.sh address
 
+      - name: libhrx CTS (conformance vs the C suite, CPU device)
+        # The hrx-system Conformance Test Suite dlopens libhrx_rs.so via
+        # --hrx-library and runs on the local-task CPU device (GPU-free). Requires
+        # the runner's hrx-system build to be configured with
+        # -DLIBHRX_BUILD_CTS=ON -DBUILD_TESTING=ON (the script fails loudly if not).
+        run: HRX_CTS_DEVICE=cpu bash scripts/cts.sh
+
       - name: fuzz smoke (value_list lifecycle, libfuzzer+ASAN)
         # The stateful lifecycle fuzzer is GPU-free but links the IREE archives, so
         # it runs on this runner (HRX_BUILD_DIR present). A short smoke per CI run;
