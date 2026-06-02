@@ -10,6 +10,9 @@ members = [
     "crates/iree-hal",
     "crates/hrx-libhrx",
 ]
+# The cargo-fuzz crate carries its own lockfile + nightly sanitizer flags; keep it
+# out of the normal workspace build.
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"

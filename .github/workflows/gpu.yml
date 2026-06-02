@@ -36,9 +36,17 @@ jobs:
           rustup toolchain install nightly-2026-04-03 --profile minimal --component rust-src
           bash scripts/sanitizer_diff.sh address
 
+      - name: fuzz smoke (value_list lifecycle, libfuzzer+ASAN)
+        # The stateful lifecycle fuzzer is GPU-free but links the IREE archives, so
+        # it runs on this runner (HRX_BUILD_DIR present). A short smoke per CI run;
+        # longer campaigns run out-of-band.
+        run: |
+          rustup toolchain install nightly-2026-04-03 --profile minimal --component rust-src
+          bash scripts/fuzz.sh 60
+
       # TSAN is intentionally NOT a lane: IREE is statically linked + uninstrumented,
       # so TSAN reports irreducible false races inside IREE's own threading. See
       # scripts/sanitizer_diff.sh (thread mode, investigation-only) and
       # scripts/tsan_suppressions.txt. Rust UB is covered by the `miri` job in
       # checks.yml — rustc has no UBSAN.
-      # TODO(phase 4): libhrx CTS (--hrx-library libhrx_rs.so); fuzz lane.
+      # TODO(phase 4): libhrx CTS (--hrx-library libhrx_rs.so).

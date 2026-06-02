@@ -618,9 +618,26 @@ geomean 1.002):
     investigation-only mode (`sanitizer_diff.sh thread` + `tsan_suppressions.txt`)
     for future work; a real TSAN lane needs a `-fsanitize=thread` IREE build (out
     of scope). Not wired into CI.
-  - [ ] **Remaining:** GPU-free fuzz targets incl. the stateful alloc/retain/
-    release lifecycle fuzzer; optionally extend the Miri mock to the owned-object
-    create chains.
+  - [x] **Fuzzer** (`fuzz/` cargo-fuzz crate + `scripts/fuzz.sh` + `gpu.yml`
+    smoke). A stateful `value_list` lifecycle target drives random sequences of
+    create / push_i64 / push_null_ref / size / get_i64 / retain / release over a
+    pool of lists under libfuzzer + ASAN, with a per-slot refcount tracker that
+    keeps exact balance (a premature library free → ASAN use-after-free; a missing
+    free → ASAN leak). value_list is GPU-free (CPU runtime init once), so it fuzzes
+    the owned-`Arc` object + the shared `Arc` handle machinery without a GPU. It
+    binds the C ABI via `extern "C"` (faithful to the real contract) while
+    depending on the port so cargo-fuzz instruments it; the fuzz crate carries its
+    own `build.rs` to link the IREE archives (`rustc-link-arg` doesn't propagate to
+    a downstream binary). **Local run: 7.5M executions in 60s, zero crashes /
+    ASAN errors / leaks.**
+  - [ ] **Optional/future:** extend the Miri mock to owned-object create chains;
+    more fuzz targets (status/decode); libhrx CTS against `libhrx_rs.so`.
+
+Phase 4 is substantially complete: Miri (handle boundary + mock-backed wrappers),
+the unsafe-block ratchet, the AddressSanitizer lane (clean on the GPU-free
+suites), and the libfuzzer+ASAN lifecycle fuzzer are all in place and wired into
+CI. UBSAN is N/A for rustc (Miri covers Rust UB) and TSAN is not viable without a
+TSAN-instrumented IREE build — both documented above.
 
 ### Alternatives Considered (pool)
 

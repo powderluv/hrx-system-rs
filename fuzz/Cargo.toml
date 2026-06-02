@@ -1,0 +1,29 @@
+# cargo-fuzz crate for the Rust libhrx port. Excluded from the main workspace
+# (see the root Cargo.toml `exclude`); it carries its own lockfile and is built
+# with the pinned nightly under libfuzzer + ASAN:
+#   cargo +nightly-2026-04-03 fuzz run value_list_lifecycle
+[package]
+name = "hrx-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.hrx-libhrx]
+path = "../crates/hrx-libhrx"
+
+# Keep fuzz binaries out of `cargo test`/doc.
+[[bin]]
+name = "value_list_lifecycle"
+path = "fuzz_targets/value_list_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
