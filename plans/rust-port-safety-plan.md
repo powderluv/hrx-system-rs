@@ -483,9 +483,25 @@ geomean 1.002):
   C's teardown order. All raw `.hal_semaphore` reads across stream/queue/fence/
   buffer now go through a `semaphore_hal_ptr` accessor. `iree-hal` now covers
   fence/semaphore/buffer_view (3 of the 21 IREE types).
-- [ ] Phase 2 (`buffer`/`stream`/`device`/`executable`/`module`/`value_list`/
-  `pool`) follow the same validated pattern. `Hal` trait / Miri deferred to when
-  Miri-on-object-model is wired (Phase 4).
+**Phase 2 (in progress, 2026-06-01).** The hot-path / heavily-referenced objects.
+
+- [x] `device` migrated to `Arc<HrxDeviceS>` with a `Drop` that runs the exact C
+  HAL teardown (allocator → group → device). MI300: 7-suite byte-identical, perf
+  gate PASS (geomean 0.998). Key decisions from the lifecycle recon: `device_get`
+  stays **borrowed** (returns the `Arc` data pointer, no clone); children are
+  **unchanged** (still store a raw `HrxDevice` and call the public retain/release,
+  now `Arc` inc/dec); HAL handle fields stay raw for now (wrapped in a later
+  sub-step) so the ~30 `(*device).hal_device` reads are untouched; the
+  self-referential inline-allocator back-pointer is built soundly via
+  `Arc::new_cyclic` (`into_handle_cyclic`), no raw write into shared `Arc` data.
+  The struct, which C leaks (fixed-array model), is now freed on last drop —
+  unobservable in valid use, and it fixes the leak. The dead per-object
+  `ref_count` field is removed (`Arc` owns the count).
+- [ ] Remaining: wrap the device's HAL handles in RAII (`HalDevice`/`HalDeviceGroup`/
+  `HalAllocator`) + route the `(*device).hal_device` reads through accessors;
+  then `buffer`/`stream` (mutable state → interior mutability per the State-shape
+  section), `executable`/`module`/`value_list`/`pool`. `Hal` trait / Miri at
+  Phase 4.
 
 ## Bottom line
 

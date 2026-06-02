@@ -354,11 +354,11 @@ pub extern "C" fn hrx_cpu_initialize(_flags: u32) -> HrxStatus {
             return hrx_status_from_iree(s);
         }
 
-        // Build the device (boxed for stable address; callers hold the pointer).
+        // Build the device as an Arc handle; new_cyclic gives the inline
+        // allocator its back-pointer (the device's own stable address).
         let hal_alloc = ireei::iree_hal_device_allocator(hal_device);
         ireei::iree_hal_allocator_retain(hal_alloc);
-        let dev = Box::into_raw(Box::new(HrxDeviceS {
-            ref_count: AtomicI32::new(1),
+        let dev = crate::handle::into_handle_cyclic(|self_ptr| HrxDeviceS {
             type_: HRX_ACCELERATOR_CPU,
             ordinal: 0,
             hal_device,
@@ -366,13 +366,11 @@ pub extern "C" fn hrx_cpu_initialize(_flags: u32) -> HrxStatus {
             allocator: HrxAllocatorInline {
                 ref_count: AtomicI32::new(1),
                 hal_allocator: hal_alloc,
-                device: core::ptr::null_mut(), // set just below
+                device: self_ptr as *mut HrxDeviceS,
             },
             name: cstr_array::<128>("CPU 0 (local-task)"),
             architecture: cstr_array::<64>("host"),
-        }));
-        // dev->allocator.device = dev (back-pointer used by hrx_allocator_*).
-        (*dev).allocator.device = dev;
+        });
 
         g.cpu.devices.clear();
         g.cpu.devices.push(dev);
@@ -610,8 +608,7 @@ pub extern "C" fn hrx_gpu_initialize(_flags: u32) -> HrxStatus {
             let hal_alloc = ireei::iree_hal_device_allocator(hal_device);
             ireei::iree_hal_allocator_retain(hal_alloc);
             let info = *infos.add(info_index);
-            let dev = Box::into_raw(Box::new(HrxDeviceS {
-                ref_count: AtomicI32::new(1),
+            let dev = crate::handle::into_handle_cyclic(|self_ptr| HrxDeviceS {
                 type_: HRX_ACCELERATOR_GPU,
                 ordinal: created as i32,
                 hal_device,
@@ -619,12 +616,11 @@ pub extern "C" fn hrx_gpu_initialize(_flags: u32) -> HrxStatus {
                 allocator: HrxAllocatorInline {
                     ref_count: AtomicI32::new(1),
                     hal_allocator: hal_alloc,
-                    device: core::ptr::null_mut(),
+                    device: self_ptr as *mut HrxDeviceS,
                 },
                 name: cstr_array_from_raw::<128>(info.name.data, info.name.size),
                 architecture: gpu_architecture(hal_device),
-            }));
-            (*dev).allocator.device = dev;
+            });
             devices.push(dev);
             created += 1;
             info_index += 1;

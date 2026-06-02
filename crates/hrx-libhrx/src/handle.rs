@@ -22,6 +22,16 @@ pub(crate) fn into_handle<T>(obj: T) -> *mut T {
     Arc::into_raw(Arc::new(obj)) as *mut T
 }
 
+/// Like [`into_handle`], but for an object that must store its own (future)
+/// handle address — e.g. the device's inline allocator back-pointer. `build`
+/// receives the data pointer the handle will have and returns the object; the
+/// self-reference is established during construction via `Arc::new_cyclic`, so
+/// no raw write into shared `Arc` data is needed.
+#[inline]
+pub(crate) fn into_handle_cyclic<T>(build: impl FnOnce(*const T) -> T) -> *mut T {
+    Arc::into_raw(Arc::new_cyclic(|weak| build(weak.as_ptr()))) as *mut T
+}
+
 /// Add one reference to a live handle (`hrx_*_retain`).
 ///
 /// # Safety

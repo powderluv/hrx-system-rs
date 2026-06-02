@@ -4,7 +4,7 @@
 #![allow(non_snake_case)]
 
 use core::ffi::{c_char, c_int, c_void};
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::AtomicI32;
 
 use crate::common::*;
 use iree_sys as iree;
@@ -30,15 +30,19 @@ pub struct HrxAllocatorInline {
     pub device: HrxDevice,
 }
 
-/// hrx_device_s. The C layout is:
-///   { ref_count, type, ordinal, hal_device, hal_device_group, profiling_active,
-///     allocator (inline), name[128], architecture[64] }
-/// Callers only ever hold an opaque `hrx_device_t` and pass it back to hrx_*
-/// functions, so exact tail layout isn't ABI-observed by callers — but the C
-/// reference and our Rust must agree internally. We keep the same field order.
-#[repr(C)]
+/// hrx_device_s — the internal device object behind the opaque `hrx_device_t`.
+///
+/// Phase-2 owned model: the handle is the data pointer of an `Arc<HrxDeviceS>`;
+/// the accelerator's `devices` Vec holds the one creation reference,
+/// `hrx_device_get` returns a *borrowed* pointer (no retain), child objects
+/// retain/release via the public fns (now `Arc` refcount ops), and `Drop` runs
+/// the HAL teardown exactly once on the last release. The struct stays at a
+/// stable address (the inline allocator's interior pointer and back-reference
+/// depend on it, established via `Arc::new_cyclic`). The HAL handle fields remain
+/// raw pointers for now — children read them directly — and get wrapped in a
+/// later sub-step. C never frees the struct (fixed-array model); the `Arc`
+/// freeing it on last drop is not observable in valid use (and fixes the leak).
 pub struct HrxDeviceS {
-    pub ref_count: AtomicI32,
     pub type_: i32,
     pub ordinal: i32,
     pub hal_device: *mut iree::iree_hal_device_t,
@@ -49,6 +53,20 @@ pub struct HrxDeviceS {
 }
 
 pub type HrxDevice = *mut HrxDeviceS;
+
+impl Drop for HrxDeviceS {
+    fn drop(&mut self) {
+        // Last-ref HAL teardown, in the C release order: inline allocator's HAL
+        // allocator, then the device group, then the HAL device.
+        // SAFETY: drop runs only when the last reference is gone, so we have
+        // exclusive access and each HAL handle is released exactly once.
+        unsafe {
+            ireei::iree_hal_allocator_release(self.allocator.hal_allocator);
+            ireei::iree_hal_device_group_release(self.hal_device_group);
+            ireei::iree_hal_device_release(self.hal_device);
+        }
+    }
+}
 
 /// An owned reference to a (not-yet-migrated) `hrx_device_t`. Constructing it
 /// retains the device; `Drop` releases it. This lets a migrated child object
@@ -195,22 +213,15 @@ pub unsafe extern "C" fn hrx_device_get_type(device: HrxDevice, type_: *mut c_in
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_device_retain(device: HrxDevice) {
-    let dev = &*device;
-    ireei::iree_hal_device_retain(dev.hal_device);
-    dev.ref_count.fetch_add(1, Ordering::Relaxed);
+    crate::handle::handle_retain(device);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_device_release(device: HrxDevice) {
-    let dev = &mut *device;
-    let hal_device = dev.hal_device;
-    let hal_device_group = dev.hal_device_group;
-    if dev.ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
-        ireei::iree_hal_allocator_release(dev.allocator.hal_allocator);
-        ireei::iree_hal_device_group_release(hal_device_group);
-        dev.allocator.hal_allocator = core::ptr::null_mut();
-        dev.hal_device = core::ptr::null_mut();
-        dev.hal_device_group = core::ptr::null_mut();
-    }
-    ireei::iree_hal_device_release(hal_device);
+    // The HAL teardown moved into `HrxDeviceS::drop`, which runs on the last
+    // reference. (The C code released `hal_device` on every call to balance a
+    // per-retain `iree_hal_device_retain`; the owned model holds one HAL device
+    // reference for the lifetime and releases it once on drop — observably
+    // equivalent.)
+    crate::handle::handle_release(device);
 }
