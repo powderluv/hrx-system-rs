@@ -1,23 +1,39 @@
-//! Rust port of libhrx/src/libhrx/semaphore.c — timeline semaphore ops.
+//! Rust port of libhrx/src/libhrx/semaphore.c — timeline semaphore.
+//!
+//! Phase-1 owned-object model: the opaque `hrx_semaphore_t` is the `Arc` data
+//! pointer of an `HrxSemaphoreS`; retain/release are `Arc` refcount ops, and on
+//! the last release the fields drop in declaration order — `HalSemaphore` first
+//! (releases the IREE semaphore), then `DeviceRef` (releases the device) — which
+//! matches the C release order (semaphore then device). The C code's per-retain
+//! device retain/release pairs cancel; here the device is held by exactly one
+//! reference for the semaphore's lifetime, which is observably equivalent.
 #![allow(non_snake_case)]
 
-use core::ffi::c_void;
-use core::sync::atomic::{AtomicI32, Ordering};
-
 use crate::common::*;
-use crate::device::{hrx_device_release, hrx_device_retain, HrxDevice};
-use iree_sys as iree;
+use crate::device::{DeviceRef, HrxDevice};
+use crate::handle::{handle_ref, handle_release, handle_retain, into_handle};
+use iree_hal::{semaphore_create, HalSemaphore};
 use iree_sys::init as ireei;
 
-/// `hrx_semaphore_s` = { ref_count, hal_semaphore, device }.
-#[repr(C)]
+/// Internal object behind the opaque `hrx_semaphore_t`. Field order is
+/// load-bearing for `Drop`: `hal` (IREE semaphore) releases before `device`.
 pub struct HrxSemaphoreS {
-    pub ref_count: AtomicI32,
-    pub hal_semaphore: *mut ireei::iree_hal_semaphore_t,
-    pub device: HrxDevice,
+    hal: HalSemaphore,
+    /// RAII drop-guard: holds one device reference for the semaphore's lifetime
+    /// and releases it on drop (after `hal`). Never read directly.
+    #[allow(dead_code)]
+    device: DeviceRef,
 }
-
 pub type HrxSemaphore = *mut HrxSemaphoreS;
+
+/// Borrow the raw IREE semaphore pointer behind a handle (for stream/queue/fence
+/// submission, which build IREE semaphore lists).
+///
+/// # Safety
+/// `sem` must be a live `hrx_semaphore_t`.
+pub(crate) unsafe fn semaphore_hal_ptr(sem: HrxSemaphore) -> *mut ireei::iree_hal_semaphore_t {
+    handle_ref(sem).hal.as_ptr()
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_semaphore_create(
@@ -31,47 +47,29 @@ pub unsafe extern "C" fn hrx_semaphore_create(
             c"device or semaphore is NULL".as_ptr(),
         );
     }
-    let sem = libc::calloc(1, core::mem::size_of::<HrxSemaphoreS>()) as *mut HrxSemaphoreS;
-    if sem.is_null() {
-        return hrx_make_status(
-            HrxStatusCode::OutOfMemory as i32,
-            c"failed to allocate semaphore".as_ptr(),
-        );
-    }
-    let mut hal_sem: *mut ireei::iree_hal_semaphore_t = core::ptr::null_mut();
-    let s = ireei::iree_hal_semaphore_create(
+    match semaphore_create(
         (*device).hal_device,
         ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
         initial_value,
         ireei::IREE_HAL_SEMAPHORE_FLAG_NONE,
-        &mut hal_sem,
-    );
-    if !iree::status_is_ok(s) {
-        libc::free(sem as *mut c_void);
-        return hrx_status_from_iree(s);
+    ) {
+        Ok(hal) => {
+            let device = DeviceRef::retain(device);
+            *semaphore = into_handle(HrxSemaphoreS { hal, device });
+            hrx_ok_status()
+        }
+        Err(s) => hrx_status_from_iree(s),
     }
-    (*sem).ref_count = AtomicI32::new(1);
-    (*sem).hal_semaphore = hal_sem;
-    (*sem).device = device;
-    hrx_device_retain((*sem).device);
-    *semaphore = sem;
-    hrx_ok_status()
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_semaphore_retain(semaphore: HrxSemaphore) {
-    ireei::iree_hal_semaphore_retain((*semaphore).hal_semaphore);
-    hrx_device_retain((*semaphore).device);
-    (*semaphore).ref_count.fetch_add(1, Ordering::Relaxed);
+    handle_retain(semaphore);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_semaphore_release(semaphore: HrxSemaphore) {
-    ireei::iree_hal_semaphore_release((*semaphore).hal_semaphore);
-    hrx_device_release((*semaphore).device);
-    if (*semaphore).ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
-        libc::free(semaphore as *mut c_void);
-    }
+    handle_release(semaphore);
 }
 
 #[no_mangle]
@@ -82,7 +80,9 @@ pub unsafe extern "C" fn hrx_semaphore_query(semaphore: HrxSemaphore, value: *mu
             c"semaphore or value is NULL".as_ptr(),
         );
     }
-    hrx_status_from_iree(ireei::iree_hal_semaphore_query((*semaphore).hal_semaphore, value))
+    // Pass the caller's storage straight through, exactly like C (IREE writes it
+    // regardless of status).
+    hrx_status_from_iree(handle_ref(semaphore).hal.query_into(&mut *value))
 }
 
 #[no_mangle]
@@ -101,12 +101,7 @@ pub unsafe extern "C" fn hrx_semaphore_wait(
     } else {
         ireei::iree_timeout_t::relative_ns(timeout_ns as i64)
     };
-    hrx_status_from_iree(ireei::iree_hal_semaphore_wait(
-        (*semaphore).hal_semaphore,
-        value,
-        timeout,
-        0,
-    ))
+    hrx_status_from_iree(handle_ref(semaphore).hal.wait(value, timeout))
 }
 
 #[no_mangle]
@@ -114,9 +109,5 @@ pub unsafe extern "C" fn hrx_semaphore_signal(semaphore: HrxSemaphore, value: u6
     if semaphore.is_null() {
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"semaphore is NULL".as_ptr());
     }
-    hrx_status_from_iree(ireei::iree_hal_semaphore_signal(
-        (*semaphore).hal_semaphore,
-        value,
-        core::ptr::null_mut(),
-    ))
+    hrx_status_from_iree(handle_ref(semaphore).hal.signal(value))
 }

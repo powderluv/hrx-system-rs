@@ -50,6 +50,32 @@ pub struct HrxDeviceS {
 
 pub type HrxDevice = *mut HrxDeviceS;
 
+/// An owned reference to a (not-yet-migrated) `hrx_device_t`. Constructing it
+/// retains the device; `Drop` releases it. This lets a migrated child object
+/// (semaphore, …) hold exactly one device reference for its lifetime via RAII,
+/// bridging until the device itself moves to the owned model in Phase 2. Place it
+/// after the child's IREE wrapper in the struct so it drops second (child IREE
+/// object released first, then the device — matching the C release order).
+pub(crate) struct DeviceRef(HrxDevice);
+
+impl DeviceRef {
+    /// Retain `device` and take an owned reference.
+    ///
+    /// # Safety
+    /// `device` must be a live `hrx_device_t`.
+    pub(crate) unsafe fn retain(device: HrxDevice) -> Self {
+        hrx_device_retain(device);
+        Self(device)
+    }
+}
+
+impl Drop for DeviceRef {
+    fn drop(&mut self) {
+        // SAFETY: we hold one reference taken in `retain`; release it once.
+        unsafe { hrx_device_release(self.0) };
+    }
+}
+
 unsafe fn cstr_len(buf: &[c_char]) -> usize {
     let mut n = 0;
     while n < buf.len() && buf[n] != 0 {

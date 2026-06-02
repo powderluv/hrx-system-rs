@@ -476,9 +476,16 @@ geomean 1.002):
   + manual `iree_hal_fence_release` accounting → `Arc`-owned `HrxFenceS { hal: HalFence }`
   with `Drop`-based release and **no direct IREE FFI in the module**. R1
   (refcount-timing equivalence) confirmed by the byte-identical `fence` suite.
-- [ ] Remaining leaf modules (`semaphore`, `buffer_view`) + then Phase 2
-  (`buffer`/`stream`/`device`) follow the same validated pattern. `Hal` trait /
-  Miri deferred to when Miri-on-object-model is wired (Phase 4).
+- [x] `semaphore.rs` + `buffer_view.rs` migrated (MI300: 7-suite byte-identical,
+  perf gate PASS, geomean 0.984). Added `HalSemaphore` + `HalBufferView` to
+  `iree-hal`, and a `DeviceRef` RAII guard (device.rs) so a child object holds
+  one device reference for its lifetime, dropped after its IREE wrapper to match
+  C's teardown order. All raw `.hal_semaphore` reads across stream/queue/fence/
+  buffer now go through a `semaphore_hal_ptr` accessor. `iree-hal` now covers
+  fence/semaphore/buffer_view (3 of the 21 IREE types).
+- [ ] Phase 2 (`buffer`/`stream`/`device`/`executable`/`module`/`value_list`/
+  `pool`) follow the same validated pattern. `Hal` trait / Miri deferred to when
+  Miri-on-object-model is wired (Phase 4).
 
 ## Bottom line
 

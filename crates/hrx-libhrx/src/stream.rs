@@ -162,7 +162,7 @@ pub unsafe extern "C" fn hrx_stream_flush(stream: HrxStream) -> HrxStatus {
     }
     let mut wait_value = (*stream).timepoint;
     let mut signal_value = (*stream).timepoint + 1;
-    let mut sem = (*(*stream).semaphore).hal_semaphore;
+    let mut sem = crate::semaphore::semaphore_hal_ptr((*stream).semaphore);
     let wait_list = ireei::iree_hal_semaphore_list_t {
         count: if (*stream).timepoint > 0 { 1 } else { 0 },
         semaphores: &mut sem,
@@ -309,9 +309,9 @@ pub unsafe extern "C" fn hrx_stream_wait_on(stream: HrxStream, position: HrxTime
         return s;
     }
     let mut signal_value = (*stream).timepoint + 1;
-    let mut wait_sem = (*position.semaphore).hal_semaphore;
+    let mut wait_sem = crate::semaphore::semaphore_hal_ptr(position.semaphore);
     let mut wait_val = position.value;
-    let mut sig_sem = (*(*stream).semaphore).hal_semaphore;
+    let mut sig_sem = crate::semaphore::semaphore_hal_ptr((*stream).semaphore);
     let wait_list = ireei::iree_hal_semaphore_list_t {
         count: 1,
         semaphores: &mut wait_sem,

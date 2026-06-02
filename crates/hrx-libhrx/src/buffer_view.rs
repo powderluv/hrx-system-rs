@@ -1,21 +1,32 @@
-//! Rust port of libhrx/src/libhrx/buffer_view.c — buffer view metadata wrapper.
+//! Rust port of libhrx/src/libhrx/buffer_view.c — buffer view metadata.
+//!
+//! Phase-1 owned-object model: the opaque `hrx_buffer_view_t` is the `Arc` data
+//! pointer of an `HrxBufferViewS`; retain/release are `Arc` refcount ops and the
+//! IREE buffer view is released exactly once by `HalBufferView`'s `Drop`. The view
+//! has no parent reference to manage — the IREE view internally holds the IREE
+//! buffer alive, matching the C code (which does not retain the hrx buffer).
 #![allow(non_snake_case)]
-
-use core::ffi::c_void;
-use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::buffer::HrxBuffer;
 use crate::common::*;
-use iree_sys as iree;
+use crate::handle::{handle_ref, handle_release, handle_retain, into_handle};
+use iree_hal::{buffer_view_create, HalBufferView};
 use iree_sys::fem;
 
-/// `hrx_buffer_view_s` = { ref_count, hal_buffer_view }.
-#[repr(C)]
+/// Internal object behind the opaque `hrx_buffer_view_t`.
 pub struct HrxBufferViewS {
-    pub ref_count: AtomicI32,
-    pub hal_buffer_view: *mut fem::iree_hal_buffer_view_t,
+    hal: HalBufferView,
 }
 pub type HrxBufferView = *mut HrxBufferViewS;
+
+/// Borrow the raw IREE buffer-view pointer behind a handle (for value_list's
+/// vm-ref adapter).
+///
+/// # Safety
+/// `bv` must be a live `hrx_buffer_view_t`.
+pub(crate) unsafe fn buffer_view_hal_ptr(bv: HrxBufferView) -> *mut fem::iree_hal_buffer_view_t {
+    handle_ref(bv).hal.as_ptr()
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_buffer_view_create(
@@ -40,12 +51,8 @@ pub unsafe extern "C" fn hrx_buffer_view_create(
         );
     }
 
-    let created = libc::calloc(1, core::mem::size_of::<HrxBufferViewS>()) as *mut HrxBufferViewS;
-    if created.is_null() {
-        return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"failed to allocate buffer_view".as_ptr());
-    }
-
-    // Stack buffer for shapes up to 8 dims (matches C); heap for larger.
+    // Stack buffer for shapes up to 8 dims (matches C); heap for larger. The
+    // chosen storage must outlive the create call below.
     let mut stack_shape = [0u64; 8];
     let mut heap_shape: Vec<u64> = Vec::new();
     let iree_shape: *const u64 = if shape_rank > 8 {
@@ -53,7 +60,6 @@ pub unsafe extern "C" fn hrx_buffer_view_create(
         for i in 0..shape_rank {
             let dim = *shape.add(i);
             if dim < 0 {
-                libc::free(created as *mut c_void);
                 return hrx_make_status(
                     HrxStatusCode::InvalidArgument as i32,
                     c"shape dimensions must be non-negative".as_ptr(),
@@ -66,7 +72,6 @@ pub unsafe extern "C" fn hrx_buffer_view_create(
         for i in 0..shape_rank {
             let dim = *shape.add(i);
             if dim < 0 {
-                libc::free(created as *mut c_void);
                 return hrx_make_status(
                     HrxStatusCode::InvalidArgument as i32,
                     c"shape dimensions must be non-negative".as_ptr(),
@@ -77,47 +82,43 @@ pub unsafe extern "C" fn hrx_buffer_view_create(
         stack_shape.as_ptr()
     };
 
-    let s = fem::iree_hal_buffer_view_create(
+    match buffer_view_create(
         (*buffer).hal_buffer,
         shape_rank,
         iree_shape,
         element_type,
         encoding_type,
-        iree::allocator_system(),
-        &mut (*created).hal_buffer_view,
-    );
-    if !iree::status_is_ok(s) {
-        libc::free(created as *mut c_void);
-        return hrx_status_from_iree(s);
+    ) {
+        Ok(hal) => {
+            *buffer_view = into_handle(HrxBufferViewS { hal });
+            hrx_ok_status()
+        }
+        Err(s) => hrx_status_from_iree(s),
     }
-    (*created).ref_count = AtomicI32::new(1);
-    *buffer_view = created;
-    hrx_ok_status()
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_buffer_view_retain(buffer_view: HrxBufferView) {
-    fem::iree_hal_buffer_view_retain((*buffer_view).hal_buffer_view);
-    (*buffer_view).ref_count.fetch_add(1, Ordering::Relaxed);
+    handle_retain(buffer_view);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_buffer_view_release(buffer_view: HrxBufferView) {
-    fem::iree_hal_buffer_view_release((*buffer_view).hal_buffer_view);
-    if (*buffer_view).ref_count.fetch_sub(1, Ordering::AcqRel) == 1 {
-        libc::free(buffer_view as *mut c_void);
-    }
+    handle_release(buffer_view);
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn hrx_buffer_view_rank(buffer_view: HrxBufferView, rank: *mut usize) -> HrxStatus {
+pub unsafe extern "C" fn hrx_buffer_view_rank(
+    buffer_view: HrxBufferView,
+    rank: *mut usize,
+) -> HrxStatus {
     if buffer_view.is_null() || rank.is_null() {
         return hrx_make_status(
             HrxStatusCode::InvalidArgument as i32,
             c"buffer_view or rank is NULL".as_ptr(),
         );
     }
-    *rank = fem::iree_hal_buffer_view_shape_rank((*buffer_view).hal_buffer_view);
+    *rank = handle_ref(buffer_view).hal.shape_rank();
     hrx_ok_status()
 }
 
@@ -133,13 +134,13 @@ pub unsafe extern "C" fn hrx_buffer_view_dim(
             c"buffer_view or value is NULL".as_ptr(),
         );
     }
-    let rank = fem::iree_hal_buffer_view_shape_rank((*buffer_view).hal_buffer_view);
-    if dim >= rank {
+    let view = handle_ref(buffer_view);
+    if dim >= view.hal.shape_rank() {
         return hrx_make_status(
             HrxStatusCode::OutOfRange as i32,
             c"buffer_view dim out of range".as_ptr(),
         );
     }
-    *value = fem::iree_hal_buffer_view_shape_dim((*buffer_view).hal_buffer_view, dim) as i64;
+    *value = view.hal.shape_dim(dim) as i64;
     hrx_ok_status()
 }

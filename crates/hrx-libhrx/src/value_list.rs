@@ -140,7 +140,7 @@ pub unsafe extern "C" fn hrx_value_list_push_buffer_view(
             c"list or buffer_view is NULL".as_ptr(),
         );
     }
-    let mut r = fem::iree_hal_buffer_view_retain_ref((*buffer_view).hal_buffer_view);
+    let mut r = fem::iree_hal_buffer_view_retain_ref(crate::buffer_view::buffer_view_hal_ptr(buffer_view));
     hrx_status_from_iree(iree::iree_vm_list_push_ref_move((*list).vm_list, &mut r))
 }
 

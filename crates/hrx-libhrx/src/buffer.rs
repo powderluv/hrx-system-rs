@@ -625,7 +625,7 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
 
     let mut wait_value = (*stream).timepoint;
     let mut signal_value = (*stream).timepoint + 1;
-    let mut sem = (*(*stream).semaphore).hal_semaphore;
+    let mut sem = crate::semaphore::semaphore_hal_ptr((*stream).semaphore);
     let wait_list = ireei::iree_hal_semaphore_list_t {
         count: if (*stream).timepoint > 0 { 1 } else { 0 },
         semaphores: &mut sem,

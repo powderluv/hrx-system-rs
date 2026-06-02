@@ -13,7 +13,8 @@
 //! calls it replaces — no added indirection, no perf cost.
 //!
 //! This crate is grown one object type at a time as each `hrx-libhrx` module is
-//! migrated off raw pointers; today it covers `iree_hal_fence_t`.
+//! migrated off raw pointers; today it covers `iree_hal_fence_t`,
+//! `iree_hal_semaphore_t`, and `iree_hal_buffer_view_t`.
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use core::ptr::NonNull;
@@ -120,6 +121,167 @@ pub unsafe fn fence_create_at(
     if iree::status_is_ok(s) {
         // SAFETY: on OK, `hal` is a freshly-created owned fence.
         Ok(unsafe { HalFence::from_owned(hal) }.expect("OK status with null fence"))
+    } else {
+        Err(s)
+    }
+}
+
+/// Owned reference to an `iree_hal_semaphore_t`. `Drop` releases, `Clone` retains.
+#[repr(transparent)]
+pub struct HalSemaphore(NonNull<ireei::iree_hal_semaphore_t>);
+
+impl HalSemaphore {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_hal_semaphore_t*` (reference transferred in).
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut ireei::iree_hal_semaphore_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut ireei::iree_hal_semaphore_t {
+        self.0.as_ptr()
+    }
+
+    /// Query the current payload into `out_value`, returning the status. Mirrors
+    /// the C path (IREE writes `out_value` regardless of the returned status, so
+    /// failure-state values propagate identically).
+    #[inline]
+    pub fn query_into(&self, out_value: &mut u64) -> iree::iree_status_t {
+        // SAFETY: self.0 is live; out_value is a valid &mut.
+        unsafe { ireei::iree_hal_semaphore_query(self.0.as_ptr(), out_value) }
+    }
+
+    #[inline]
+    pub fn wait(&self, value: u64, timeout: ireei::iree_timeout_t) -> iree::iree_status_t {
+        // SAFETY: self.0 is live.
+        unsafe { ireei::iree_hal_semaphore_wait(self.0.as_ptr(), value, timeout, 0) }
+    }
+
+    #[inline]
+    pub fn signal(&self, value: u64) -> iree::iree_status_t {
+        // SAFETY: self.0 is live; a null frontier means "no frontier".
+        unsafe { ireei::iree_hal_semaphore_signal(self.0.as_ptr(), value, core::ptr::null_mut()) }
+    }
+}
+
+impl Clone for HalSemaphore {
+    #[inline]
+    fn clone(&self) -> Self {
+        // SAFETY: self.0 is live; retain bumps its refcount.
+        unsafe { ireei::iree_hal_semaphore_retain(self.0.as_ptr()) };
+        Self(self.0)
+    }
+}
+
+impl Drop for HalSemaphore {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release returns it once.
+        unsafe { ireei::iree_hal_semaphore_release(self.0.as_ptr()) };
+    }
+}
+
+/// Create a timeline semaphore on `device`.
+///
+/// # Safety
+/// `device` must be a valid `iree_hal_device_t*`.
+#[inline]
+pub unsafe fn semaphore_create(
+    device: *mut iree::iree_hal_device_t,
+    queue_affinity: u64,
+    initial_value: u64,
+    flags: u32,
+) -> Result<HalSemaphore, iree::iree_status_t> {
+    let mut hal: *mut ireei::iree_hal_semaphore_t = core::ptr::null_mut();
+    // SAFETY: out-pointer is valid; `device` is the caller's responsibility.
+    let s = unsafe {
+        ireei::iree_hal_semaphore_create(device, queue_affinity, initial_value, flags, &mut hal)
+    };
+    if iree::status_is_ok(s) {
+        // SAFETY: on OK, `hal` is a freshly-created owned semaphore.
+        Ok(unsafe { HalSemaphore::from_owned(hal) }.expect("OK status with null semaphore"))
+    } else {
+        Err(s)
+    }
+}
+
+/// Owned reference to an `iree_hal_buffer_view_t`. `Drop` releases, `Clone` retains.
+#[repr(transparent)]
+pub struct HalBufferView(NonNull<fem::iree_hal_buffer_view_t>);
+
+impl HalBufferView {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_hal_buffer_view_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut fem::iree_hal_buffer_view_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut fem::iree_hal_buffer_view_t {
+        self.0.as_ptr()
+    }
+
+    #[inline]
+    pub fn shape_rank(&self) -> usize {
+        // SAFETY: self.0 is live.
+        unsafe { fem::iree_hal_buffer_view_shape_rank(self.0.as_ptr()) }
+    }
+
+    #[inline]
+    pub fn shape_dim(&self, index: usize) -> u64 {
+        // SAFETY: self.0 is live; bounds are the caller's responsibility.
+        unsafe { fem::iree_hal_buffer_view_shape_dim(self.0.as_ptr(), index) }
+    }
+}
+
+impl Clone for HalBufferView {
+    #[inline]
+    fn clone(&self) -> Self {
+        // SAFETY: self.0 is live.
+        unsafe { fem::iree_hal_buffer_view_retain(self.0.as_ptr()) };
+        Self(self.0)
+    }
+}
+
+impl Drop for HalBufferView {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference.
+        unsafe { fem::iree_hal_buffer_view_release(self.0.as_ptr()) };
+    }
+}
+
+/// Create a buffer view over `buffer` with the given (already-validated) shape.
+///
+/// # Safety
+/// `buffer` must be a valid `iree_hal_buffer_t*` and `shape` must point to
+/// `shape_rank` `u64`s.
+#[inline]
+pub unsafe fn buffer_view_create(
+    buffer: *mut ireei::iree_hal_buffer_t,
+    shape_rank: usize,
+    shape: *const u64,
+    element_type: u32,
+    encoding_type: u32,
+) -> Result<HalBufferView, iree::iree_status_t> {
+    let mut hal: *mut fem::iree_hal_buffer_view_t = core::ptr::null_mut();
+    // SAFETY: out-pointer is valid; buffer/shape are the caller's responsibility.
+    let s = unsafe {
+        fem::iree_hal_buffer_view_create(
+            buffer,
+            shape_rank,
+            shape,
+            element_type,
+            encoding_type,
+            iree::allocator_system(),
+            &mut hal,
+        )
+    };
+    if iree::status_is_ok(s) {
+        // SAFETY: on OK, `hal` is a freshly-created owned buffer view.
+        Ok(unsafe { HalBufferView::from_owned(hal) }.expect("OK status with null buffer_view"))
     } else {
         Err(s)
     }

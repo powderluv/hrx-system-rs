@@ -64,7 +64,7 @@ unsafe fn to_iree_sem_list(
     let n = (*list).count;
     for i in 0..n {
         let sem = *(*list).semaphores.add(i);
-        *hal.add(i) = (*sem).hal_semaphore;
+        *hal.add(i) = crate::semaphore::semaphore_hal_ptr(sem);
         *vals.add(i) = *(*list).values.add(i);
     }
     ireei::iree_hal_semaphore_list_t {

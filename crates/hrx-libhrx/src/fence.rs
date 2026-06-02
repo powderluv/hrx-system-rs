@@ -59,7 +59,7 @@ pub unsafe extern "C" fn hrx_fence_create_at(
         );
     }
     *fence = core::ptr::null_mut();
-    match fence_create_at((*semaphore).hal_semaphore, value) {
+    match fence_create_at(crate::semaphore::semaphore_hal_ptr(semaphore), value) {
         Ok(hal) => {
             *fence = into_handle(HrxFenceS { hal });
             hrx_ok_status()
@@ -90,7 +90,7 @@ pub unsafe extern "C" fn hrx_fence_insert(
             c"fence or semaphore is NULL".as_ptr(),
         );
     }
-    hrx_status_from_iree(handle_ref(fence).hal.insert((*semaphore).hal_semaphore, value))
+    hrx_status_from_iree(handle_ref(fence).hal.insert(crate::semaphore::semaphore_hal_ptr(semaphore), value))
 }
 
 #[no_mangle]
