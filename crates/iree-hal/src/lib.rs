@@ -14,7 +14,8 @@
 //!
 //! This crate is grown one object type at a time as each `hrx-libhrx` module is
 //! migrated off raw pointers; today it covers `iree_hal_fence_t`,
-//! `iree_hal_semaphore_t`, and `iree_hal_buffer_view_t`.
+//! `iree_hal_semaphore_t`, `iree_hal_buffer_view_t`, `iree_hal_device_t`,
+//! `iree_hal_device_group_t`, and `iree_hal_allocator_t`.
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use core::ptr::NonNull;
@@ -284,5 +285,85 @@ pub unsafe fn buffer_view_create(
         Ok(unsafe { HalBufferView::from_owned(hal) }.expect("OK status with null buffer_view"))
     } else {
         Err(s)
+    }
+}
+
+/// Owned reference to an `iree_hal_device_t`. Move-only: `Drop` releases the one
+/// reference the device object holds for its lifetime. (The port no longer does
+/// per-retain HAL device retain/release — the hrx device refcount is an `Arc`.)
+#[repr(transparent)]
+pub struct HalDevice(NonNull<iree::iree_hal_device_t>);
+
+impl HalDevice {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_hal_device_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut iree::iree_hal_device_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut iree::iree_hal_device_t {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HalDevice {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release it once.
+        unsafe { ireei::iree_hal_device_release(self.0.as_ptr()) };
+    }
+}
+
+/// Owned reference to an `iree_hal_device_group_t`. Move-only.
+#[repr(transparent)]
+pub struct HalDeviceGroup(NonNull<iree::iree_hal_device_group_t>);
+
+impl HalDeviceGroup {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_hal_device_group_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut iree::iree_hal_device_group_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut iree::iree_hal_device_group_t {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HalDeviceGroup {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release it once.
+        unsafe { ireei::iree_hal_device_group_release(self.0.as_ptr()) };
+    }
+}
+
+/// Owned reference to an `iree_hal_allocator_t`. Move-only: `Drop` releases the
+/// one reference the device holds. (The public `hrx_allocator_retain`/`release`
+/// fans out a separate, balanced `iree_hal_allocator_retain`/`release` on the raw
+/// pointer via `as_ptr` — that transient pairing is not owned by this wrapper.)
+#[repr(transparent)]
+pub struct HalAllocator(NonNull<iree::iree_hal_allocator_t>);
+
+impl HalAllocator {
+    /// # Safety
+    /// `ptr` must be a valid owned `iree_hal_allocator_t*`.
+    #[inline]
+    pub unsafe fn from_owned(ptr: *mut iree::iree_hal_allocator_t) -> Option<Self> {
+        NonNull::new(ptr).map(Self)
+    }
+    #[inline]
+    pub fn as_ptr(&self) -> *mut iree::iree_hal_allocator_t {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for HalAllocator {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: self owns one reference; release it once.
+        unsafe { ireei::iree_hal_allocator_release(self.0.as_ptr()) };
     }
 }

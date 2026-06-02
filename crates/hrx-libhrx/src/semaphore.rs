@@ -48,7 +48,7 @@ pub unsafe extern "C" fn hrx_semaphore_create(
         );
     }
     match semaphore_create(
-        (*device).hal_device,
+        (*device).hal_device.as_ptr(),
         ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
         initial_value,
         ireei::IREE_HAL_SEMAPHORE_FLAG_NONE,

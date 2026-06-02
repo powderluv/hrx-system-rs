@@ -61,13 +61,13 @@ pub unsafe extern "C" fn hrx_device_allocator(device: HrxDevice) -> HrxAllocator
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_allocator_retain(allocator: HrxAllocator) {
-    ireei::iree_hal_allocator_retain((*allocator).hal_allocator);
+    ireei::iree_hal_allocator_retain((*allocator).hal_allocator.as_ptr());
     hrx_device_retain((*allocator).device);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn hrx_allocator_release(allocator: HrxAllocator) {
-    ireei::iree_hal_allocator_release((*allocator).hal_allocator);
+    ireei::iree_hal_allocator_release((*allocator).hal_allocator.as_ptr());
     hrx_device_release((*allocator).device);
 }
 
@@ -103,7 +103,7 @@ pub unsafe extern "C" fn hrx_allocator_allocate_buffer(
     };
     let mut hal_buffer: *mut ireei::iree_hal_buffer_t = core::ptr::null_mut();
     let s = ireei::iree_hal_allocator_allocate_buffer(
-        (*allocator).hal_allocator,
+        (*allocator).hal_allocator.as_ptr(),
         hal_params,
         size as u64,
         &mut hal_buffer,
@@ -289,7 +289,7 @@ pub unsafe extern "C" fn hrx_synchronous_h2d(
         );
     }
     hrx_status_from_iree(ireei::iree_hal_device_transfer_h2d(
-        (*device).hal_device,
+        (*device).hal_device.as_ptr(),
         host_src,
         (*dst).hal_buffer,
         dst_offset as u64,
@@ -317,7 +317,7 @@ pub unsafe extern "C" fn hrx_synchronous_d2h(
         );
     }
     hrx_status_from_iree(ireei::iree_hal_device_transfer_d2h(
-        (*device).hal_device,
+        (*device).hal_device.as_ptr(),
         (*src).hal_buffer,
         src_offset as u64,
         host_dst,
@@ -360,7 +360,7 @@ pub unsafe extern "C" fn hrx_allocator_import_buffer(
     };
     let mut hal_buffer: *mut ireei::iree_hal_buffer_t = core::ptr::null_mut();
     let s = fem::iree_hal_allocator_import_buffer(
-        (*allocator).hal_allocator,
+        (*allocator).hal_allocator.as_ptr(),
         hal_params,
         &mut ext,
         fem::iree_hal_buffer_release_callback_t::null(),
@@ -395,7 +395,7 @@ pub unsafe extern "C" fn hrx_allocator_query_virtual_memory(
     if allocator.is_null() || supported.is_null() {
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"allocator or supported is NULL".as_ptr());
     }
-    *supported = fem::iree_hal_allocator_supports_virtual_memory((*allocator).hal_allocator);
+    *supported = fem::iree_hal_allocator_supports_virtual_memory((*allocator).hal_allocator.as_ptr());
     if !*supported {
         if !min_page_size.is_null() { *min_page_size = 0; }
         if !recommended_page_size.is_null() { *recommended_page_size = 0; }
@@ -413,7 +413,7 @@ pub unsafe extern "C" fn hrx_allocator_query_virtual_memory(
     };
     let mut min: u64 = 0;
     let mut rec: u64 = 0;
-    let s = fem::iree_hal_allocator_virtual_memory_query_granularity((*allocator).hal_allocator, hal_params, &mut min, &mut rec);
+    let s = fem::iree_hal_allocator_virtual_memory_query_granularity((*allocator).hal_allocator.as_ptr(), hal_params, &mut min, &mut rec);
     if !iree::status_is_ok(s) {
         *supported = false;
         if !min_page_size.is_null() { *min_page_size = 0; }
@@ -437,13 +437,13 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_reserve(
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"NULL argument".as_ptr());
     }
     let mut hal_buffer: *mut ireei::iree_hal_buffer_t = core::ptr::null_mut();
-    let s = fem::iree_hal_allocator_virtual_memory_reserve((*allocator).hal_allocator, affinity, size as u64, &mut hal_buffer);
+    let s = fem::iree_hal_allocator_virtual_memory_reserve((*allocator).hal_allocator.as_ptr(), affinity, size as u64, &mut hal_buffer);
     if !iree::status_is_ok(s) {
         return hrx_status_from_iree(s);
     }
     let buf = alloc_buffer_struct();
     if buf.is_null() {
-        fem::iree_hal_allocator_virtual_memory_release((*allocator).hal_allocator, hal_buffer);
+        fem::iree_hal_allocator_virtual_memory_release((*allocator).hal_allocator.as_ptr(), hal_buffer);
         return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"out of memory".as_ptr());
     }
     (*buf).ref_count = AtomicI32::new(1);
@@ -464,7 +464,7 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_release(
     if allocator.is_null() || virtual_buffer.is_null() {
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"NULL argument".as_ptr());
     }
-    let s = fem::iree_hal_allocator_virtual_memory_release((*allocator).hal_allocator, (*virtual_buffer).hal_buffer);
+    let s = fem::iree_hal_allocator_virtual_memory_release((*allocator).hal_allocator.as_ptr(), (*virtual_buffer).hal_buffer);
     // hal_buffer ownership transferred; free the hrx wrapper.
     (*virtual_buffer).hal_buffer = core::ptr::null_mut();
     hrx_device_release((*virtual_buffer).device);
@@ -492,7 +492,7 @@ pub unsafe extern "C" fn hrx_allocator_physical_memory_allocate(
         min_alignment: 0,
     };
     hrx_status_from_iree(fem::iree_hal_allocator_physical_memory_allocate(
-        (*allocator).hal_allocator,
+        (*allocator).hal_allocator.as_ptr(),
         hal_params,
         size as u64,
         iree::allocator_system(),
@@ -508,7 +508,7 @@ pub unsafe extern "C" fn hrx_allocator_physical_memory_free(
     if allocator.is_null() || physical.is_null() {
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"NULL argument".as_ptr());
     }
-    hrx_status_from_iree(fem::iree_hal_allocator_physical_memory_free((*allocator).hal_allocator, physical))
+    hrx_status_from_iree(fem::iree_hal_allocator_physical_memory_free((*allocator).hal_allocator.as_ptr(), physical))
 }
 
 #[no_mangle]
@@ -524,7 +524,7 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_map(
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"NULL argument".as_ptr());
     }
     hrx_status_from_iree(fem::iree_hal_allocator_virtual_memory_map(
-        (*allocator).hal_allocator,
+        (*allocator).hal_allocator.as_ptr(),
         (*virtual_buffer).hal_buffer,
         virtual_offset as u64,
         physical,
@@ -544,7 +544,7 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_unmap(
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"NULL argument".as_ptr());
     }
     hrx_status_from_iree(fem::iree_hal_allocator_virtual_memory_unmap(
-        (*allocator).hal_allocator,
+        (*allocator).hal_allocator.as_ptr(),
         (*virtual_buffer).hal_buffer,
         virtual_offset as u64,
         size as u64,
@@ -563,7 +563,7 @@ pub unsafe extern "C" fn hrx_allocator_virtual_memory_protect(
         return hrx_make_status(HrxStatusCode::InvalidArgument as i32, c"NULL argument".as_ptr());
     }
     hrx_status_from_iree(fem::iree_hal_allocator_virtual_memory_protect(
-        (*allocator).hal_allocator,
+        (*allocator).hal_allocator.as_ptr(),
         (*virtual_buffer).hal_buffer,
         virtual_offset as u64,
         size as u64,
@@ -594,7 +594,7 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
         return hrx_make_status(HrxStatusCode::OutOfMemory as i32, c"out of memory".as_ptr());
     }
 
-    let allocator = (*(*stream).device).allocator.hal_allocator;
+    let allocator = (*(*stream).device).allocator.hal_allocator.as_ptr();
     let mut params = ireei::iree_hal_buffer_params_t {
         usage,
         access: ireei::IREE_HAL_MEMORY_ACCESS_ALL,
@@ -640,7 +640,7 @@ pub unsafe extern "C" fn hrx_buffer_allocate(
     let mut status = hrx_iree_exact_pool_create(allocator, params, &mut (*buf).hal_pool);
     if iree::status_is_ok(status) {
         status = ireei::iree_hal_device_queue_alloca(
-            (*(*stream).device).hal_device,
+            (*(*stream).device).hal_device.as_ptr(),
             ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
             wait_list,
             signal_list,

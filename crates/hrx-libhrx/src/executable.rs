@@ -73,7 +73,7 @@ pub unsafe extern "C" fn hrx_executable_load_data(
 
     let mut cache: *mut fem::iree_hal_executable_cache_t = core::ptr::null_mut();
     let s = fem::iree_hal_executable_cache_create(
-        (*device).hal_device,
+        (*device).hal_device.as_ptr(),
         ireei::iree_string_view_t::cstr(c"hrx"),
         &mut cache,
     );

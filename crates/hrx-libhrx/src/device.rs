@@ -7,6 +7,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::AtomicI32;
 
 use crate::common::*;
+use iree_hal::{HalAllocator, HalDevice, HalDeviceGroup};
 use iree_sys as iree;
 use iree_sys::init as ireei;
 
@@ -20,13 +21,13 @@ const HRX_DEVICE_PROPERTY_TOTAL_MEMORY: i32 = 2;
 const HRX_DEVICE_PROPERTY_COMPUTE_UNITS: i32 = 3;
 const HRX_DEVICE_PROPERTY_MAX_WORKGROUP_SIZE: i32 = 4;
 
-/// Inline allocator (hrx_allocator_s) — owned by the device. C layout:
-/// { ref_count, hal_allocator, device }. The `device` back-pointer is used by
-/// the allocator API (hrx_allocator_retain/release/allocate_buffer).
-#[repr(C)]
+/// Inline allocator (hrx_allocator_s) — owned by the device. The `hal_allocator`
+/// is an RAII `HalAllocator` (released when the device drops). The `device`
+/// back-pointer is used by the allocator API (hrx_allocator_retain/release/
+/// allocate_buffer); the dead `ref_count` is kept only to mirror the C field set.
 pub struct HrxAllocatorInline {
     pub ref_count: AtomicI32,
-    pub hal_allocator: *mut iree::iree_hal_allocator_t,
+    pub hal_allocator: HalAllocator,
     pub device: HrxDevice,
 }
 
@@ -35,38 +36,25 @@ pub struct HrxAllocatorInline {
 /// Phase-2 owned model: the handle is the data pointer of an `Arc<HrxDeviceS>`;
 /// the accelerator's `devices` Vec holds the one creation reference,
 /// `hrx_device_get` returns a *borrowed* pointer (no retain), child objects
-/// retain/release via the public fns (now `Arc` refcount ops), and `Drop` runs
-/// the HAL teardown exactly once on the last release. The struct stays at a
-/// stable address (the inline allocator's interior pointer and back-reference
-/// depend on it, established via `Arc::new_cyclic`). The HAL handle fields remain
-/// raw pointers for now — children read them directly — and get wrapped in a
-/// later sub-step. C never frees the struct (fixed-array model); the `Arc`
-/// freeing it on last drop is not observable in valid use (and fixes the leak).
+/// retain/release via the public fns (now `Arc` refcount ops). The HAL handles
+/// are RAII wrappers, so teardown is just field drop in declaration order —
+/// `allocator` (HalAllocator) → `hal_device_group` → `hal_device`, matching the C
+/// release order — with no explicit `Drop`. The struct stays at a stable address
+/// (the inline allocator's interior pointer + back-reference depend on it, built
+/// via `Arc::new_cyclic`). C never frees the struct (fixed-array model); the
+/// `Arc` freeing it on last drop is not observable in valid use (fixes the leak).
 pub struct HrxDeviceS {
     pub type_: i32,
     pub ordinal: i32,
-    pub hal_device: *mut iree::iree_hal_device_t,
-    pub hal_device_group: *mut iree::iree_hal_device_group_t,
+    // Drop order is load-bearing: allocator first, then group, then device.
     pub allocator: HrxAllocatorInline,
+    pub hal_device_group: HalDeviceGroup,
+    pub hal_device: HalDevice,
     pub name: [c_char; 128],
     pub architecture: [c_char; 64],
 }
 
 pub type HrxDevice = *mut HrxDeviceS;
-
-impl Drop for HrxDeviceS {
-    fn drop(&mut self) {
-        // Last-ref HAL teardown, in the C release order: inline allocator's HAL
-        // allocator, then the device group, then the HAL device.
-        // SAFETY: drop runs only when the last reference is gone, so we have
-        // exclusive access and each HAL handle is released exactly once.
-        unsafe {
-            ireei::iree_hal_allocator_release(self.allocator.hal_allocator);
-            ireei::iree_hal_device_group_release(self.hal_device_group);
-            ireei::iree_hal_device_release(self.hal_device);
-        }
-    }
-}
 
 /// An owned reference to a (not-yet-migrated) `hrx_device_t`. Constructing it
 /// retains the device; `Drop` releases it. This lets a migrated child object
@@ -152,7 +140,7 @@ pub unsafe extern "C" fn hrx_device_get_property(
             }
             let mut mem_size: i64 = 0;
             let s = ireei::iree_hal_device_query_i64(
-                dev.hal_device,
+                dev.hal_device.as_ptr(),
                 ireei::iree_string_view_t::cstr(c"hal.device"),
                 ireei::iree_string_view_t::cstr(c"memory.total"),
                 &mut mem_size,
@@ -190,7 +178,7 @@ pub unsafe extern "C" fn hrx_device_synchronize(device: HrxDevice) -> HrxStatus 
     // Deprecated no-op shim: an empty wait list returns immediately.
     let empty = ireei::iree_hal_semaphore_list_t::default();
     let s = ireei::iree_hal_device_wait_semaphores(
-        dev.hal_device,
+        dev.hal_device.as_ptr(),
         iree::IREE_ASYNC_WAIT_MODE_ALL,
         empty,
         ireei::iree_timeout_t::infinite(),

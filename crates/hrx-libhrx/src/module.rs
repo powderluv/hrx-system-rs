@@ -95,7 +95,7 @@ pub unsafe extern "C" fn hrx_module_load_vmfb(
         return hrx_status_from_iree(s);
     }
 
-    let device_group = (*device).hal_device_group;
+    let device_group = (*device).hal_device_group.as_ptr();
     if device_group.is_null() {
         destroy_partial(loaded);
         return hrx_make_status(

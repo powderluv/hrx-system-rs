@@ -497,11 +497,18 @@ geomean 1.002):
   The struct, which C leaks (fixed-array model), is now freed on last drop —
   unobservable in valid use, and it fixes the leak. The dead per-object
   `ref_count` field is removed (`Arc` owns the count).
-- [ ] Remaining: wrap the device's HAL handles in RAII (`HalDevice`/`HalDeviceGroup`/
-  `HalAllocator`) + route the `(*device).hal_device` reads through accessors;
-  then `buffer`/`stream` (mutable state → interior mutability per the State-shape
-  section), `executable`/`module`/`value_list`/`pool`. `Hal` trait / Miri at
-  Phase 4.
+- [x] Device HAL handles wrapped in RAII (`HalDevice`/`HalDeviceGroup`/
+  `HalAllocator` in `iree-hal`); teardown is now field-drop in declaration order
+  (allocator → group → device, the C order) with no explicit `Drop`; the ~33
+  `(*device).hal_*` reads route through `.as_ptr()`. MI300: 7-suite
+  byte-identical, perf gate PASS (geomean 0.999). The device is now fully owned
+  (object + HAL handles). The allocator's `hrx_allocator_retain/release` keep
+  their separate balanced `iree_hal_allocator_retain/release` (transient, via
+  `as_ptr`), not owned by the wrapper.
+- [ ] Remaining: `buffer`/`stream` (mutable state → interior mutability per the
+  State-shape section: buffer map-state enum with `Drop`-unmap; stream pending
+  command buffer), then `executable`/`module`/`value_list`/`pool`. `Hal` trait /
+  Miri at Phase 4.
 
 ## Bottom line
 

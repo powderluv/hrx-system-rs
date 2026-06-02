@@ -95,7 +95,7 @@ pub unsafe extern "C" fn hrx_queue_fill(
     let qa = normalize_affinity(affinity);
     let mut cb: *mut ireei::iree_hal_command_buffer_t = core::ptr::null_mut();
     let s = ireei::iree_hal_command_buffer_create(
-        (*device).hal_device,
+        (*device).hal_device.as_ptr(),
         ireei::IREE_HAL_COMMAND_BUFFER_MODE_ONE_SHOT,
         ireei::IREE_HAL_COMMAND_CATEGORY_TRANSFER,
         qa,
@@ -128,7 +128,7 @@ pub unsafe extern "C" fn hrx_queue_fill(
     let wl = to_iree_sem_list(wait_semaphores, wh.as_mut_ptr(), wv.as_mut_ptr());
     let sl = to_iree_sem_list(signal_semaphores, sh.as_mut_ptr(), sv.as_mut_ptr());
     let bt = ireei::iree_hal_buffer_binding_table_t::default();
-    let s = ireei::iree_hal_device_queue_execute((*device).hal_device, qa, wl, sl, cb, bt, 0);
+    let s = ireei::iree_hal_device_queue_execute((*device).hal_device.as_ptr(), qa, wl, sl, cb, bt, 0);
     ireei::iree_hal_command_buffer_release(cb);
     hrx_status_from_iree(s)
 }
@@ -154,7 +154,7 @@ pub unsafe extern "C" fn hrx_queue_copy(
     let qa = normalize_affinity(affinity);
     let mut cb: *mut ireei::iree_hal_command_buffer_t = core::ptr::null_mut();
     let s = ireei::iree_hal_command_buffer_create(
-        (*device).hal_device,
+        (*device).hal_device.as_ptr(),
         ireei::IREE_HAL_COMMAND_BUFFER_MODE_ONE_SHOT,
         ireei::IREE_HAL_COMMAND_CATEGORY_TRANSFER,
         qa,
@@ -188,7 +188,7 @@ pub unsafe extern "C" fn hrx_queue_copy(
     let wl = to_iree_sem_list(wait_semaphores, wh.as_mut_ptr(), wv.as_mut_ptr());
     let sl = to_iree_sem_list(signal_semaphores, sh.as_mut_ptr(), sv.as_mut_ptr());
     let bt = ireei::iree_hal_buffer_binding_table_t::default();
-    let s = ireei::iree_hal_device_queue_execute((*device).hal_device, qa, wl, sl, cb, bt, 0);
+    let s = ireei::iree_hal_device_queue_execute((*device).hal_device.as_ptr(), qa, wl, sl, cb, bt, 0);
     ireei::iree_hal_command_buffer_release(cb);
     hrx_status_from_iree(s)
 }
@@ -210,7 +210,7 @@ pub unsafe extern "C" fn hrx_queue_barrier(
     let wl = to_iree_sem_list(wait_semaphores, wh.as_mut_ptr(), wv.as_mut_ptr());
     let sl = to_iree_sem_list(signal_semaphores, sh.as_mut_ptr(), sv.as_mut_ptr());
     let s = ireei::iree_hal_device_queue_barrier(
-        (*device).hal_device,
+        (*device).hal_device.as_ptr(),
         normalize_affinity(affinity),
         wl,
         sl,
@@ -276,7 +276,7 @@ pub unsafe extern "C" fn hrx_queue_host_call(
         user_data: thunk as *mut c_void,
     };
     let s = ireei::iree_hal_device_queue_host_call(
-        (*device).hal_device,
+        (*device).hal_device.as_ptr(),
         normalize_affinity(affinity),
         wl,
         sl,
@@ -354,7 +354,7 @@ pub unsafe extern "C" fn hrx_queue_dispatch(
     let func = fem::iree_hal_executable_function_t { value: export_ordinal as u64 };
 
     let s = ireei::iree_hal_device_queue_dispatch(
-        (*device).hal_device,
+        (*device).hal_device.as_ptr(),
         normalize_affinity(affinity),
         wl,
         sl,

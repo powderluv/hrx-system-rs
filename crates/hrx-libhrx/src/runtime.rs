@@ -14,6 +14,7 @@ use std::sync::Mutex;
 
 use crate::common::*;
 use crate::device::*;
+use iree_hal::{HalAllocator, HalDevice, HalDeviceGroup};
 use iree_sys as iree;
 use iree_sys::init as ireei;
 
@@ -361,11 +362,11 @@ pub extern "C" fn hrx_cpu_initialize(_flags: u32) -> HrxStatus {
         let dev = crate::handle::into_handle_cyclic(|self_ptr| HrxDeviceS {
             type_: HRX_ACCELERATOR_CPU,
             ordinal: 0,
-            hal_device,
-            hal_device_group: device_group,
+            hal_device: HalDevice::from_owned(hal_device).expect("null hal_device"),
+            hal_device_group: HalDeviceGroup::from_owned(device_group).expect("null group"),
             allocator: HrxAllocatorInline {
                 ref_count: AtomicI32::new(1),
-                hal_allocator: hal_alloc,
+                hal_allocator: HalAllocator::from_owned(hal_alloc).expect("null allocator"),
                 device: self_ptr as *mut HrxDeviceS,
             },
             name: cstr_array::<128>("CPU 0 (local-task)"),
@@ -608,18 +609,19 @@ pub extern "C" fn hrx_gpu_initialize(_flags: u32) -> HrxStatus {
             let hal_alloc = ireei::iree_hal_device_allocator(hal_device);
             ireei::iree_hal_allocator_retain(hal_alloc);
             let info = *infos.add(info_index);
+            let arch = gpu_architecture(hal_device);
             let dev = crate::handle::into_handle_cyclic(|self_ptr| HrxDeviceS {
                 type_: HRX_ACCELERATOR_GPU,
                 ordinal: created as i32,
-                hal_device,
-                hal_device_group: device_group,
+                hal_device: HalDevice::from_owned(hal_device).expect("null hal_device"),
+                hal_device_group: HalDeviceGroup::from_owned(device_group).expect("null group"),
                 allocator: HrxAllocatorInline {
                     ref_count: AtomicI32::new(1),
-                    hal_allocator: hal_alloc,
+                    hal_allocator: HalAllocator::from_owned(hal_alloc).expect("null allocator"),
                     device: self_ptr as *mut HrxDeviceS,
                 },
                 name: cstr_array_from_raw::<128>(info.name.data, info.name.size),
-                architecture: gpu_architecture(hal_device),
+                architecture: arch,
             });
             devices.push(dev);
             created += 1;

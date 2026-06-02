@@ -47,7 +47,7 @@ unsafe fn stream_begin_cb(stream: HrxStream) -> HrxStatus {
     }
     let mut cb: *mut ireei::iree_hal_command_buffer_t = core::ptr::null_mut();
     let s = ireei::iree_hal_command_buffer_create(
-        (*(*stream).device).hal_device,
+        (*(*stream).device).hal_device.as_ptr(),
         ireei::IREE_HAL_COMMAND_BUFFER_MODE_ONE_SHOT,
         ireei::IREE_HAL_COMMAND_CATEGORY_TRANSFER | ireei::IREE_HAL_COMMAND_CATEGORY_DISPATCH,
         ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
@@ -175,7 +175,7 @@ pub unsafe extern "C" fn hrx_stream_flush(stream: HrxStream) -> HrxStatus {
     };
     let binding_table = ireei::iree_hal_buffer_binding_table_t::default();
     let s = ireei::iree_hal_device_queue_execute(
-        (*(*stream).device).hal_device,
+        (*(*stream).device).hal_device.as_ptr(),
         ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
         wait_list,
         signal_list,
@@ -323,7 +323,7 @@ pub unsafe extern "C" fn hrx_stream_wait_on(stream: HrxStream, position: HrxTime
         payload_values: &mut signal_value,
     };
     let s = ireei::iree_hal_device_queue_barrier(
-        (*(*stream).device).hal_device,
+        (*(*stream).device).hal_device.as_ptr(),
         ireei::IREE_HAL_QUEUE_AFFINITY_ANY,
         wait_list,
         signal_list,
