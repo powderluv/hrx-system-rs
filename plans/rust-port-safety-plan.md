@@ -453,7 +453,11 @@ become unrepresentable. Each is independently shippable and reversible.
 - [x] `rust-toolchain.toml` pin; CI skeleton (`.github/workflows/checks.yml`
   stock lanes, `gpu.yml` self-hosted MI300 lane). Note: `build.rs` requires the
   prebuilt archives, so iree-sys/hrx-libhrx build+gates are self-hosted.
-- [ ] Perf-gate threshold in `bench_libhrx_parity.sh` (B4) — next.
+- [x] Perf-gate threshold (B4): `scripts/bench_gate.py` (geomean ≤ 1.05 +
+  per-op ≤ 1.25, timer-floor ops exempt) wired as the exit gate of
+  `bench_libhrx_parity.sh`. Validated: PASS on the parity CSV (geomean 0.997),
+  FAIL on a synthetic 30% regression. The loose per-op ceiling tolerates the
+  known 16 MB clock-drift band.
 - [ ] `#![deny(unsafe_op_in_unsafe_fn)]` crate-wide — deferred to land with the
   module refactors (Phases 1–2), to avoid churning code about to be rewritten.
 

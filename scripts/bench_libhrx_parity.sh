@@ -75,3 +75,11 @@ grep -h '^SKIP ' "$OUT/c-hrx.stderr" "$OUT/rust.stderr" 2>/dev/null && echo "(no
 
 echo "== parity table (ratio = rust / c-hrx) =="
 python3 "$RS/scripts/bench_compare.py" "$CSV" c-hrx 2>/dev/null || true
+
+echo "== perf gate =="
+if [ "$RC" -ne 0 ]; then
+  echo "PERF GATE FAILED: a backend did not produce trustworthy data (see above)."
+  exit 1
+fi
+python3 "$RS/scripts/bench_gate.py" "$CSV" c-hrx rust
+exit $?
