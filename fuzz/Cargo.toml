@@ -25,5 +25,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "buffer_lifecycle"
+path = "fuzz_targets/buffer_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
 [profile.release]
 debug = 1

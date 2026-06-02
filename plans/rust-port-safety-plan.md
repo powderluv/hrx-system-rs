@@ -630,8 +630,16 @@ geomean 1.002):
     own `build.rs` to link the IREE archives (`rustc-link-arg` doesn't propagate to
     a downstream binary). **Local run: 7.5M executions in 60s, zero crashes /
     ASAN errors / leaks.**
+  - [x] **Second fuzz target: `buffer_lifecycle`.** The buffer is the most
+    intricate owned object — `RefCell` map-state, Drop-unmap, `Option<HalPool>`,
+    `DeviceRef`. On a CPU device (GPU-free, host-visible memory) it fuzzes random
+    allocate / retain / release / map / unmap / get_size sequences, touches the
+    mapped memory on a successful map (a bad mapping pointer/length → ASAN OOB),
+    and deliberately releases still-mapped buffers (Drop-unmap path). **Local run:
+    7.56M executions in 60s, zero crashes / ASAN errors / leaks.** `scripts/fuzz.sh`
+    runs both targets.
   - [ ] **Optional/future:** extend the Miri mock to owned-object create chains;
-    more fuzz targets (status/decode); libhrx CTS against `libhrx_rs.so`.
+    libhrx CTS against `libhrx_rs.so`.
 
 Phase 4 is substantially complete: Miri (handle boundary + mock-backed wrappers),
 the unsafe-block ratchet, the AddressSanitizer lane (clean on the GPU-free
